@@ -1,0 +1,1910 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NewsMag — Modern Editorial News & Live Headlines</title>
+    <link rel="preconnect" href="https://newsapi.org" crossorigin />
+    <link rel="preconnect" href="https://api.rss2json.com" crossorigin />
+    <link rel="preconnect" href="https://ichef.bbci.co.uk" crossorigin />
+    <link rel="preconnect" href="https://images.unsplash.com" crossorigin />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      crossorigin="anonymous"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    />
+    <link rel="stylesheet" href="./src/index.css" />
+    <link rel="stylesheet" href="./src/App.css" />
+    <script
+      crossorigin
+      src="https://unpkg.com/react@18/umd/react.production.min.js"
+    ></script>
+    <script
+      crossorigin
+      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+    ></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+      // Environment API Key from .env
+      const VITE_API_KEY = "ad82c248f29e4a71a9a4dbde90cd007a";
+
+      // ============================================================================
+      // 1. CORE ISOLATION LAYER: IsolatedEventBus, CircuitBreaker, ServiceErrorBoundary
+      // ============================================================================
+      class IsolatedEventBus {
+        constructor() {
+          this.listeners = new Map();
+          this.eventLog = [];
+        }
+        on(eventName, handler) {
+          if (!this.listeners.has(eventName)) {
+            this.listeners.set(eventName, new Set());
+          }
+          this.listeners.get(eventName).add(handler);
+          return () => this.off(eventName, handler);
+        }
+        off(eventName, handler) {
+          const handlers = this.listeners.get(eventName);
+          if (handlers) {
+            handlers.delete(handler);
+            if (handlers.size === 0) this.listeners.delete(eventName);
+          }
+        }
+        emit(eventName, payload) {
+          this.eventLog = [
+            {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              eventName,
+              timestamp: new Date().toISOString(),
+            },
+            ...this.eventLog.slice(0, 29),
+          ];
+          const handlers = this.listeners.get(eventName);
+          if (!handlers) return;
+          handlers.forEach((handler) => {
+            try {
+              handler(payload);
+            } catch (err) {
+              console.error(
+                `[EventBus Fault Isolation] Subscriber failed on "${eventName}":`,
+                err
+              );
+            }
+          });
+        }
+        getRecentEvents() {
+          return this.eventLog;
+        }
+      }
+
+      const eventBus = new IsolatedEventBus();
+      const EVENTS = {
+        CATEGORY_CHANGED: "navigation:category_changed",
+        COUNTRY_CHANGED: "navigation:country_changed",
+        SEARCH_CHANGED: "search:query_changed",
+        SORT_CHANGED: "search:sort_changed",
+        VIEW_MODE_CHANGED: "preferences:view_mode_changed",
+        THEME_CHANGED: "preferences:theme_changed",
+        ACTIVE_TAB_CHANGED: "navigation:tab_changed",
+        BOOKMARKS_UPDATED: "bookmarks:updated",
+        ARTICLE_SELECTED: "reader:article_selected",
+        TOAST_NOTIFY: "ui:toast_notify",
+        SERVICE_HEALTH_UPDATED: "telemetry:health_updated",
+      };
+
+      class CircuitBreaker {
+        constructor(serviceName, options = {}) {
+          this.serviceName = serviceName;
+          this.failureThreshold = options.failureThreshold || 3;
+          this.cooldownMs = options.cooldownMs || 35000;
+          this.timeoutMs = options.timeoutMs || 8000;
+          this.state = "CLOSED";
+          this.failureCount = 0;
+          this.lastFailureTime = null;
+          this.lastError = null;
+        }
+        getStatus() {
+          if (
+            this.state === "OPEN" &&
+            this.lastFailureTime &&
+            Date.now() - this.lastFailureTime >= this.cooldownMs
+          ) {
+            this.state = "HALF_OPEN";
+          }
+          return {
+            serviceName: this.serviceName,
+            state: this.state,
+            failureCount: this.failureCount,
+            lastError: this.lastError,
+          };
+        }
+        recordSuccess() {
+          this.failureCount = 0;
+          this.state = "CLOSED";
+          this.lastError = null;
+        }
+        recordFailure(msg) {
+          this.failureCount += 1;
+          this.lastFailureTime = Date.now();
+          this.lastError = msg || "Service error";
+          if (this.failureCount >= this.failureThreshold) {
+            this.state = "OPEN";
+          }
+        }
+        reset() {
+          this.failureCount = 0;
+          this.state = "CLOSED";
+          this.lastError = null;
+          this.lastFailureTime = null;
+        }
+        async execute(actionFn, fallbackFn) {
+          const current = this.getStatus();
+          if (current.state === "OPEN") {
+            return fallbackFn({
+              reason: `Circuit OPEN (${this.lastError})`,
+              circuitState: this.state,
+            });
+          }
+          try {
+            const result = await Promise.race([
+              actionFn(),
+              new Promise((_, reject) =>
+                setTimeout(
+                  () => reject(new Error(`Timeout after ${this.timeoutMs}ms`)),
+                  this.timeoutMs
+                )
+              ),
+            ]);
+            this.recordSuccess();
+            return result;
+          } catch (error) {
+            this.recordFailure(error?.message || "Service error");
+            return fallbackFn({
+              reason: error?.message || "Service error",
+              circuitState: this.state,
+            });
+          }
+        }
+      }
+
+      // ============================================================================
+      // 2. CATALOG, SUBJECTS & DATE FORMATTING HELPERS
+      // ============================================================================
+      const CATEGORIES = [
+        {
+          id: "general",
+          label: "Top Stories",
+          icon: "bi-newspaper",
+          color: "#ef4444",
+          desc: "Breaking world headlines, diplomacy & global affairs",
+        },
+        {
+          id: "technology",
+          label: "Technology",
+          icon: "bi-cpu",
+          color: "#3b82f6",
+          desc: "AI, software, semiconductors, gadgets & cybersecurity",
+        },
+        {
+          id: "business",
+          label: "Business",
+          icon: "bi-graph-up-arrow",
+          color: "#10b981",
+          desc: "Markets, economy, startups, finance & global trade",
+        },
+        {
+          id: "science",
+          label: "Science",
+          icon: "bi-rocket-takeoff",
+          color: "#8b5cf6",
+          desc: "Space exploration, physics, climate & discoveries",
+        },
+        {
+          id: "health",
+          label: "Health",
+          icon: "bi-heart-pulse",
+          color: "#ec4899",
+          desc: "Medicine, wellness, biotech, nutrition & longevity",
+        },
+        {
+          id: "sports",
+          label: "Sports",
+          icon: "bi-trophy",
+          color: "#f59e0b",
+          desc: "Cricket, football, tennis, Formula 1 & championships",
+        },
+        {
+          id: "entertainment",
+          label: "Entertainment",
+          icon: "bi-film",
+          color: "#f97316",
+          desc: "Cinema, streaming, music, gaming & pop culture",
+        },
+      ];
+
+      const NEWS_SUBJECTS = [
+        { id: "all", label: "All Subjects (India + Macro World)", icon: "bi-grid-fill", category: "all", query: "" },
+        { id: "india-national", label: "India Policy, Parliament & Governance", icon: "bi-bank2", category: "general", query: "India OR New Delhi OR Parliament OR Supreme Court OR Cabinet" },
+        { id: "markets-economy", label: "Sensex, Nifty, RBI & Macro Economy", icon: "bi-currency-exchange", category: "business", query: "Sensex OR Nifty OR RBI OR India economy OR inflation OR global markets" },
+        { id: "ai-robotics", label: "Indian IT, AI & Frontier Tech", icon: "bi-robot", category: "technology", query: "India AI OR Bengaluru tech OR semiconductor OR OpenAI OR Gemini" },
+        { id: "geopolitics", label: "Macro Geopolitics & Global Diplomacy", icon: "bi-globe-americas", category: "general", query: "India diplomacy OR BRICS OR G20 OR UN summit OR geopolitics" },
+        { id: "startups-vc", label: "Indian Startups, IPOs & FinTech", icon: "bi-lightbulb-fill", category: "business", query: "Indian startups OR IPO India OR UPI OR FinTech OR venture capital" },
+        { id: "cricket", label: "India Cricket, IPL & BCCI", icon: "bi-award-fill", category: "sports", query: "India cricket OR BCCI OR IPL OR Team India OR test match" },
+        { id: "space-cosmos", label: "ISRO, NASA & Space Missions", icon: "bi-stars", category: "science", query: "ISRO OR Gaganyaan OR Chandrayaan OR NASA OR SpaceX" },
+        { id: "climate-energy", label: "Green Energy, EVs & Climate Macro", icon: "bi-sun-fill", category: "science", query: "renewable energy India OR solar OR electric vehicles OR climate summit" },
+        { id: "cybersecurity", label: "Cybersecurity & Digital Public Infra", icon: "bi-shield-lock-fill", category: "technology", query: "cybersecurity OR Digital India OR data privacy OR CERT-In" },
+        { id: "medicine-biotech", label: "Healthcare, AIIMS & Pharma India", icon: "bi-capsule-pill", category: "health", query: "AIIMS OR ICMR OR Indian pharma OR clinical trial OR WHO" },
+        { id: "cinema-gaming", label: "Indian Cinema, Bollywood & OTT", icon: "bi-controller", category: "entertainment", query: "Bollywood OR Indian cinema OR box office India OR OTT" },
+      ];
+
+      const COUNTRIES = [
+        { code: "in", label: "India + Macro World", short: "IN", flag: "🇮🇳" },
+        { code: "us", label: "United States", short: "US", flag: "🇺🇸" },
+        { code: "gb", label: "United Kingdom", short: "UK", flag: "🇬🇧" },
+        { code: "ca", label: "Canada", short: "CA", flag: "🇨🇦" },
+        { code: "au", label: "Australia", short: "AU", flag: "🇦🇺" },
+      ];
+
+      const DATE_PRESETS = [
+        { id: "all", label: "All Real-Time", icon: "bi-broadcast" },
+        { id: "today", label: "Today", icon: "bi-lightning-charge" },
+        { id: "yesterday", label: "Yesterday", icon: "bi-calendar-event" },
+        { id: "7d", label: "Last 7 Days", icon: "bi-calendar-week" },
+        { id: "30d", label: "Last 30 Days", icon: "bi-calendar-month" },
+        { id: "custom", label: "Custom Date", icon: "bi-calendar-range" },
+      ];
+
+      const CATEGORY_FALLBACK_IMAGES = {
+        general: "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=1000&q=80",
+        technology: "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1000&q=80",
+        business: "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1000&q=80",
+        science: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1000&q=80",
+        health: "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=1000&q=80",
+        sports: "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?auto=format&fit=crop&w=1000&q=80",
+        entertainment: "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1000&q=80",
+      };
+
+      function formatRelativeTime(dateString) {
+        if (!dateString) return "Just now";
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return "Recently";
+        const diffSeconds = Math.floor((Date.now() - date.getTime()) / 1000);
+        if (diffSeconds < 60) return "Just now";
+        const diffMinutes = Math.floor(diffSeconds / 60);
+        if (diffMinutes < 60) return `${diffMinutes}m ago`;
+        const diffHours = Math.floor(diffMinutes / 60);
+        if (diffHours < 24) return `${diffHours}h ago`;
+        const diffDays = Math.floor(diffHours / 24);
+        if (diffDays === 1) return "Yesterday";
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      }
+
+      function formatExactDateTime(dateString) {
+        if (!dateString) return "Live";
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return "Recent";
+        return date.toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+
+      function getLocalDateKey(dateString) {
+        const date = dateString ? new Date(dateString) : new Date();
+        if (isNaN(date.getTime())) return "unknown";
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, "0");
+        const d = String(date.getDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+
+      function formatDateHeading(dateKey) {
+        if (!dateKey || dateKey === "unknown") return "Recent Coverage";
+        const todayKey = getLocalDateKey(new Date().toISOString());
+        const yesterdayKey = getLocalDateKey(new Date(Date.now() - 86400000).toISOString());
+        const [year, month, day] = dateKey.split("-").map(Number);
+        const dateObj = new Date(year, month - 1, day);
+        const formattedFull = dateObj.toLocaleDateString("en-US", {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        });
+        if (dateKey === todayKey) return `Today — ${formattedFull}`;
+        if (dateKey === yesterdayKey) return `Yesterday — ${formattedFull}`;
+        return formattedFull;
+      }
+
+      function estimateReadingTime(article) {
+        const text = `${article?.title || ""} ${article?.description || ""} ${article?.content || ""}`;
+        const words = text.trim().split(/\s+/).filter(Boolean).length;
+        const minutes = Math.max(2, Math.min(8, Math.ceil(words / 45)));
+        return `${minutes} min read`;
+      }
+
+      function cleanArticleContent(content, description) {
+        const raw = content || description || "";
+        const cleaned = raw.replace(/\s*\[\+\d+\s*chars\]\s*$/i, "").trim();
+        return cleaned || "Full details for this developing story are available directly on the publisher's website.";
+      }
+
+      // ============================================================================
+      // 3. DOMAIN MICROSERVICES
+      // ============================================================================
+      const INITIAL_SERVICES = {
+        "news-ingestion-service": {
+          id: "news-ingestion-service",
+          name: "News Ingestion & API Gateway",
+          domain: "Data & Network",
+          status: "HEALTHY",
+          message: "Connected to NewsAPI v2 (top-headlines + everything)",
+        },
+        "realtime-stream-service": {
+          id: "realtime-stream-service",
+          name: "Real-Time Live Stream Service",
+          domain: "Live Breaking Wire",
+          status: "HEALTHY",
+          message: "Streaming up-to-the-minute breaking publisher feeds",
+        },
+        "fallback-catalog-service": {
+          id: "fallback-catalog-service",
+          name: "Curated Fallback Catalog Service",
+          domain: "Resilience & Offline",
+          status: "HEALTHY",
+          message: "Standby curated articles ready across 7 categories",
+        },
+        "search-indexing-service": {
+          id: "search-indexing-service",
+          name: "Search, Date & Ranking Service",
+          domain: "Query & Filtering",
+          status: "HEALTHY",
+          message: "Real-time keyword indexing and chronological date grouping",
+        },
+        "bookmark-storage-service": {
+          id: "bookmark-storage-service",
+          name: "Bookmark Persistence Service",
+          domain: "Local Storage",
+          status: "HEALTHY",
+          message: "Isolated storage adapter with schema validation",
+        },
+        "user-preference-service": {
+          id: "user-preference-service",
+          name: "Theme & Edition Preference Service",
+          domain: "User Experience",
+          status: "HEALTHY",
+          message: "Managing theme, country edition, and view layout",
+        },
+      };
+
+      class HealthMonitorService {
+        constructor() {
+          this.services = { ...INITIAL_SERVICES };
+        }
+        reportStatus(serviceId, patch) {
+          const existing = this.services[serviceId] || {
+            id: serviceId,
+            name: patch.name || serviceId,
+            domain: patch.domain || "UI Micro-Frontend",
+          };
+          this.services = {
+            ...this.services,
+            [serviceId]: { ...existing, ...patch, updatedAt: new Date().toISOString() },
+          };
+          eventBus.emit(EVENTS.SERVICE_HEALTH_UPDATED, this.getAllStatuses());
+        }
+        getAllStatuses() {
+          return Object.values(this.services);
+        }
+        getSummary() {
+          const list = this.getAllStatuses();
+          const healthyCount = list.filter((s) => s.status === "HEALTHY").length;
+          const degradedCount = list.filter((s) => s.status === "DEGRADED").length;
+          const faultCount = list.filter((s) => s.status === "ISOLATED_FAULT").length;
+          return {
+            total: list.length,
+            healthyCount,
+            degradedCount,
+            faultCount,
+            overall: faultCount > 0 ? "ISOLATED_FAULT" : degradedCount > 0 ? "DEGRADED" : "HEALTHY",
+          };
+        }
+      }
+      const healthMonitorService = new HealthMonitorService();
+
+      class ServiceErrorBoundary extends React.Component {
+        constructor(props) {
+          super(props);
+          this.state = { hasError: false, error: null };
+        }
+        static getDerivedStateFromError(error) {
+          return { hasError: true, error };
+        }
+        componentDidCatch(error) {
+          healthMonitorService.reportStatus(this.props.serviceId || "ui-module", {
+            name: this.props.serviceName || "UI Module",
+            status: "ISOLATED_FAULT",
+            message: error?.message || "Runtime exception isolated",
+          });
+        }
+        handleReset = () => {
+          healthMonitorService.reportStatus(this.props.serviceId || "ui-module", {
+            name: this.props.serviceName || "UI Module",
+            status: "HEALTHY",
+            message: "Recovered via manual reset",
+          });
+          this.setState({ hasError: false, error: null });
+          if (this.props.onReset) this.props.onReset();
+        };
+        render() {
+          if (this.state.hasError) {
+            return (
+              <div className="service-fault-card-compact p-3 rounded-3 border border-danger d-flex align-items-center justify-content-between gap-2 my-2">
+                <div className="small">
+                  <i className="bi bi-shield-exclamation text-danger me-2"></i>
+                  <strong>{this.props.serviceName || "Service"}</strong> isolated a fault
+                </div>
+                <button type="button" className="btn btn-sm btn-outline-danger" onClick={this.handleReset}>
+                  Recover
+                </button>
+              </div>
+            );
+          }
+          return this.props.children;
+        }
+      }
+
+      const LIVE_RSS_FEEDS = {
+        general: [
+          { url: "https://feeds.bbci.co.uk/news/world/rss.xml", sourceName: "BBC World News" },
+          { url: "https://feeds.feedburner.com/ndtvnews-top-stories", sourceName: "NDTV Live" },
+        ],
+        technology: [{ url: "https://feeds.bbci.co.uk/news/technology/rss.xml", sourceName: "BBC Technology" }],
+        business: [{ url: "https://feeds.bbci.co.uk/news/business/rss.xml", sourceName: "BBC Business" }],
+        science: [{ url: "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml", sourceName: "BBC Science" }],
+        health: [{ url: "https://feeds.bbci.co.uk/news/health/rss.xml", sourceName: "BBC Health" }],
+        sports: [{ url: "https://feeds.bbci.co.uk/sport/rss.xml", sourceName: "BBC Sport" }],
+        entertainment: [{ url: "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml", sourceName: "BBC Arts" }],
+      };
+
+      function stripHtml(html = "") {
+        return String(html).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      }
+
+      class LiveStreamService {
+        async fetchLiveCategoryStream(category = "general", country = "us") {
+          const feeds = [...(LIVE_RSS_FEEDS[category] || LIVE_RSS_FEEDS.general)];
+          if (country === "in" && category === "general") feeds.reverse();
+          try {
+            const requests = feeds.map(async (feed) => {
+              const res = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.url)}`);
+              const data = await res.json();
+              if (data.status !== "ok" || !Array.isArray(data.items)) return [];
+              return data.items.map((item) => {
+                const rawImg = item.thumbnail || item.enclosure?.link || "";
+                const pubIso = item.pubDate
+                  ? new Date(String(item.pubDate).trim().replace(" ", "T") + "Z").toISOString()
+                  : new Date().toISOString();
+                return {
+                  source: { id: feed.sourceName, name: feed.sourceName },
+                  author: item.author || feed.sourceName,
+                  title: stripHtml(item.title || "Breaking Live Update"),
+                  description: stripHtml(item.description || ""),
+                  content: stripHtml(item.content || item.description || ""),
+                  url: item.link || "https://www.bbc.com/news",
+                  urlToImage: rawImg ? rawImg.replace("/standard/240/", "/standard/976/") : CATEGORY_FALLBACK_IMAGES[category],
+                  publishedAt: pubIso,
+                  category,
+                  isRealtimeStream: true,
+                };
+              });
+            });
+            const settled = await Promise.allSettled(requests);
+            const merged = settled.filter((r) => r.status === "fulfilled").flatMap((r) => r.value);
+            healthMonitorService.reportStatus("realtime-stream-service", {
+              status: merged.length > 0 ? "HEALTHY" : "DEGRADED",
+              message: `Streaming ${merged.length} real-time breaking wire items`,
+            });
+            return merged;
+          } catch {
+            return [];
+          }
+        }
+      }
+      const liveStreamService = new LiveStreamService();
+
+      const CATEGORY_QUERY_TERMS = {
+        general: "world OR breaking OR economy OR government",
+        technology: "technology OR AI OR software OR semiconductors",
+        business: "business OR markets OR economy OR finance",
+        science: "science OR space OR physics OR climate",
+        health: "health OR medicine OR clinical OR healthcare",
+        sports: "sports OR football OR cricket OR tennis OR formula 1",
+        entertainment: "entertainment OR cinema OR film OR music OR gaming",
+      };
+
+      const COUNTRY_QUERY_TERMS = {
+        us: "United States OR US",
+        in: "India",
+        gb: "UK OR Britain",
+        ca: "Canada",
+        au: "Australia",
+      };
+
+      const INDIA_SCOPE_REGEX =
+        /\b(india|indian|delhi|new delhi|mumbai|bengaluru|bangalore|chennai|kolkata|hyderabad|pune|ahmedabad|kerala|tamil nadu|maharashtra|karnataka|uttar pradesh|gujarat|modi|parliament|supreme court|rbi|sebi|sensex|nifty|rupee|gst|isro|aiims|icmr|iit|bcci|ipl|bollywood|the hindu|indian express|ndtv|times of india)\b/i;
+
+      const INSTANT_SEED_ARTICLES = [
+        {
+          source: { id: "the-hindu", name: "The Hindu" },
+          author: "New Delhi Bureau",
+          title: "India Accelerates National Semiconductor & Green Hydrogen Manufacturing Corridors",
+          description: "Union Cabinet clears new fabrication and clean-energy industrial clusters across Gujarat, Tamil Nadu, Karnataka, and Maharashtra.",
+          url: "https://www.thehindu.com/",
+          urlToImage: CATEGORY_FALLBACK_IMAGES.general,
+          publishedAt: new Date(Date.now() - 900000).toISOString(),
+          category: "general",
+          scope: "INDIA",
+          isRealtimeStream: true,
+          isJustIn: true,
+        },
+        {
+          source: { id: "indian-express", name: "The Indian Express" },
+          author: "Economy Desk",
+          title: "RBI Monetary Policy & Digital Public Infrastructure Drive Record UPI and Institutional Flows",
+          description: "Domestic institutional investors and retail participation push Indian equity benchmarks and digital payment volumes to fresh milestones.",
+          url: "https://indianexpress.com/",
+          urlToImage: CATEGORY_FALLBACK_IMAGES.business,
+          publishedAt: new Date(Date.now() - 1800000).toISOString(),
+          category: "business",
+          scope: "INDIA",
+          isRealtimeStream: true,
+          isJustIn: true,
+        },
+        {
+          source: { id: "bbc-world", name: "BBC World Macro" },
+          author: "Global Macro Desk",
+          title: "Global Central Banks & G20 Finance Ministers Coordinate Macro Trade and Energy Frameworks",
+          description: "Macro-level policy alignment focuses on sovereign supply chains, cross-border settlement corridors, and AI compute infrastructure.",
+          url: "https://www.bbc.com/news",
+          urlToImage: CATEGORY_FALLBACK_IMAGES.technology,
+          publishedAt: new Date(Date.now() - 2700000).toISOString(),
+          category: "general",
+          scope: "MACRO_GLOBAL",
+          isRealtimeStream: true,
+          isJustIn: false,
+        },
+      ];
+
+      class NewsFeedService {
+        constructor() {
+          this.cache = new Map();
+          this.prefetched = new Set();
+          this.circuitBreaker = new CircuitBreaker("news-ingestion-service");
+        }
+        getInstantSnapshot({ category = "general", country = "in", fromDate = "", toDate = "", remoteSearchQuery = "" } = {}) {
+          const cacheKey = `${country}:${category}:${fromDate}:${toDate}:${remoteSearchQuery}`;
+          const l1 = this.cache.get(cacheKey);
+          if (l1 && l1.payload?.articles?.length > 0) {
+            return { ...l1.payload, latencyMs: 0 };
+          }
+          try {
+            const raw = localStorage.getItem("newsmag_l2_indiamacro_v3_" + cacheKey);
+            if (raw) {
+              const l2 = JSON.parse(raw);
+              if (l2 && Array.isArray(l2.articles) && l2.articles.length > 0) {
+                return { articles: l2.articles, latencyMs: 1 };
+              }
+            }
+          } catch {}
+          return {
+            articles: INSTANT_SEED_ARTICLES.map((a) => this.normalizeArticle(a, category)),
+            latencyMs: 0,
+          };
+        }
+        normalizeArticle(raw, category = "general") {
+          const fallbackImg = CATEGORY_FALLBACK_IMAGES[raw?.category || category] || CATEGORY_FALLBACK_IMAGES.general;
+          const publishedIso = raw?.publishedAt ? new Date(raw.publishedAt).toISOString() : new Date().toISOString();
+          const detectedScope =
+            raw?.scope ||
+            (INDIA_SCOPE_REGEX.test(`${raw?.title || ""} ${raw?.description || ""} ${raw?.source?.name || ""}`)
+              ? "INDIA"
+              : "MACRO_GLOBAL");
+          return {
+            source: { id: raw?.source?.id || null, name: raw?.source?.name || "News Desk" },
+            author: raw?.author && !String(raw.author).startsWith("http") ? String(raw.author) : "Editorial Staff",
+            title: raw?.title && raw.title !== "[Removed]" ? String(raw.title).trim() : "Developing News Story",
+            description: raw?.description && raw.description !== "[Removed]" ? String(raw.description).trim() : "Click 'Preview' or 'Read More' to explore full coverage.",
+            content: raw?.content ? String(raw.content) : "",
+            url: raw?.url || "https://news.google.com",
+            urlToImage: raw?.urlToImage || fallbackImg,
+            publishedAt: publishedIso,
+            dateKey: getLocalDateKey(publishedIso),
+            category: raw?.category || category,
+            scope: detectedScope,
+            isRealtimeStream: Boolean(raw?.isRealtimeStream),
+            isJustIn:
+              Boolean(raw?.isJustIn) ||
+              Date.now() - new Date(publishedIso).getTime() <= 35 * 60 * 1000,
+          };
+        }
+        deduplicateArticles(articles, category = "general") {
+          const seen = new Set();
+          const result = [];
+          for (const raw of articles) {
+            if (!raw || !raw.title || raw.title === "[Removed]") continue;
+            const item = raw.dateKey ? raw : this.normalizeArticle(raw, category);
+            const norm = item.title.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 65);
+            if (!norm || seen.has(norm)) continue;
+            seen.add(norm);
+            result.push(item);
+          }
+          return result.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+        }
+        schedulePrefetch(country = "in", currentCategory = "general") {
+          if (this.prefetched.has(country)) return;
+          this.prefetched.add(country);
+          CATEGORIES.map((c) => c.id)
+            .filter((id) => id !== currentCategory)
+            .forEach((catId, idx) => {
+              setTimeout(() => {
+                this.getHeadlines({ category: catId, country }).catch(() => {});
+              }, 350 + idx * 250);
+            });
+        }
+        prefetchOnHover({ category = "general", country = "in", remoteSearchQuery = "" } = {}) {
+          const cacheKey = `${country}:${category}:::${remoteSearchQuery}`;
+          if (this.cache.has(cacheKey)) return;
+          this.getHeadlines({ category, country, remoteSearchQuery }).catch(() => {});
+        }
+        async getHeadlines({ category = "general", country = "in", fromDate = "", toDate = "", remoteSearchQuery = "", forceRefresh = false, onPartialUpdate } = {}) {
+          const start = performance.now();
+          const cacheKey = `${country}:${category}:${fromDate}:${toDate}:${remoteSearchQuery}`;
+          const cached = this.cache.get(cacheKey);
+          if (!forceRefresh && cached && Date.now() - cached.timestamp < 240000) {
+            this.schedulePrefetch(country, category);
+            return { ...cached.payload, latencyMs: 0 };
+          }
+          return this.circuitBreaker.execute(
+            async () => {
+              let accumulated = [];
+              let firstLatency = null;
+              const emitBatch = (items) => {
+                if (!Array.isArray(items) || items.length === 0) return;
+                accumulated = [...accumulated, ...items];
+                const merged = this.deduplicateArticles(accumulated, category);
+                if (merged.length > 0 && onPartialUpdate) {
+                  if (firstLatency === null) firstLatency = Math.round(performance.now() - start);
+                  onPartialUpdate({ articles: merged, latencyMs: firstLatency });
+                }
+              };
+
+              // Stream 0: Local <2ms RAM Edge Cache Server (/api/fast-news)
+              const edgeParams = new URLSearchParams({
+                category,
+                country,
+                q: remoteSearchQuery.trim(),
+                from: fromDate,
+                to: toDate,
+                force: forceRefresh ? "1" : "0",
+              });
+              const edgeItems = await fetch(`/api/fast-news?${edgeParams.toString()}`)
+                .then((r) => (r.ok ? r.json() : null))
+                .then((d) => (d?.status === "ok" && Array.isArray(d.articles) ? d.articles : []))
+                .catch(() => []);
+
+              if (edgeItems.length > 0) {
+                emitBatch(edgeItems);
+              } else {
+                const liveWirePromise = liveStreamService
+                  .fetchLiveCategoryStream(category, country)
+                  .then((items) => {
+                    emitBatch(items);
+                    return items;
+                  })
+                  .catch(() => []);
+
+                const topHeadlinesPromise = fetch(`https://newsapi.org/v2/top-headlines?country=${country}&category=${category}&pageSize=25&apiKey=${VITE_API_KEY}`)
+                  .then((r) => r.json())
+                  .then((d) => {
+                    const items = d.status === "ok" && Array.isArray(d.articles) ? d.articles : [];
+                    emitBatch(items);
+                    return items;
+                  })
+                  .catch(() => []);
+
+                const baseTopic = CATEGORY_QUERY_TERMS[category] || CATEGORY_QUERY_TERMS.general;
+                const countryTerm = COUNTRY_QUERY_TERMS[country] || "";
+                const combinedQuery = remoteSearchQuery.trim()
+                  ? `${remoteSearchQuery.trim()} AND (${baseTopic})`
+                  : country === "us"
+                  ? `(${baseTopic})`
+                  : `(${baseTopic}) AND (${countryTerm})`;
+
+                const params = new URLSearchParams({
+                  q: combinedQuery,
+                  sortBy: "publishedAt",
+                  language: "en",
+                  pageSize: "30",
+                  apiKey: VITE_API_KEY,
+                });
+                if (fromDate) params.set("from", fromDate);
+                if (toDate) params.set("to", toDate);
+
+                const everythingPromise = fetch(`https://newsapi.org/v2/everything?${params.toString()}`)
+                  .then((r) => r.json())
+                  .then((d) => {
+                    const items = d.status === "ok" && Array.isArray(d.articles) ? d.articles : [];
+                    emitBatch(items);
+                    return items;
+                  })
+                  .catch(() => []);
+
+                await Promise.allSettled([
+                  liveWirePromise,
+                  topHeadlinesPromise,
+                  everythingPromise,
+                ]);
+              }
+
+              const validArticles = this.deduplicateArticles(accumulated, category);
+              if (validArticles.length === 0) throw new Error("No articles returned");
+
+              const latencyMs = firstLatency ?? Math.round(performance.now() - start);
+              const payload = {
+                articles: validArticles,
+                isFallback: false,
+                statusMessage: "",
+                latencyMs,
+                lastSyncedAt: new Date().toISOString(),
+              };
+              this.cache.set(cacheKey, { timestamp: Date.now(), payload });
+              try {
+                localStorage.setItem(
+                  "newsmag_l2_fastcache_v2_" + cacheKey,
+                  JSON.stringify({ articles: validArticles.slice(0, 30), timestamp: Date.now() })
+                );
+              } catch {}
+              this.schedulePrefetch(country, category);
+              return payload;
+            },
+            ({ reason }) => ({
+              articles: INSTANT_SEED_ARTICLES.map((a) => this.normalizeArticle(a, category)),
+              isFallback: true,
+              statusMessage: reason,
+              latencyMs: 0,
+              lastSyncedAt: new Date().toISOString(),
+            })
+          );
+        }
+      }
+      const newsFeedService = new NewsFeedService();
+
+      class SearchSortService {
+        resolveDateBounds(datePreset = "all", customFrom = "", customTo = "") {
+          const now = new Date();
+          const todayKey = getLocalDateKey(now.toISOString());
+          if (datePreset === "today") return { fromKey: todayKey, toKey: todayKey };
+          if (datePreset === "yesterday") {
+            const yKey = getLocalDateKey(new Date(now.getTime() - 86400000).toISOString());
+            return { fromKey: yKey, toKey: yKey };
+          }
+          if (datePreset === "7d") {
+            return { fromKey: getLocalDateKey(new Date(now.getTime() - 7 * 86400000).toISOString()), toKey: todayKey };
+          }
+          if (datePreset === "30d") {
+            return { fromKey: getLocalDateKey(new Date(now.getTime() - 30 * 86400000).toISOString()), toKey: todayKey };
+          }
+          if (datePreset === "custom") return { fromKey: customFrom || "", toKey: customTo || "" };
+          return { fromKey: "", toKey: "" };
+        }
+        queryAndSort(articles = [], { searchQuery = "", sortBy = "publishedAt", datePreset = "all", customFromDate = "", customToDate = "" } = {}) {
+          const q = String(searchQuery || "").trim().toLowerCase();
+          const { fromKey, toKey } = this.resolveDateBounds(datePreset, customFromDate, customToDate);
+          const filtered = articles.filter((item) => {
+            if (!item) return false;
+            if (q) {
+              const hay = `${item.title || ""} ${item.description || ""} ${item.source?.name || ""}`.toLowerCase();
+              if (!hay.includes(q)) return false;
+            }
+            if (fromKey || toKey) {
+              const dk = item.dateKey || getLocalDateKey(item.publishedAt);
+              if (fromKey && dk < fromKey) return false;
+              if (toKey && dk > toKey) return false;
+            }
+            return true;
+          });
+          return [...filtered].sort((a, b) => {
+            if (sortBy === "title") return String(a?.title || "").localeCompare(String(b?.title || ""));
+            if (sortBy === "source") return String(a?.source?.name || "").localeCompare(String(b?.source?.name || ""));
+            const dA = new Date(a.publishedAt).getTime() || 0;
+            const dB = new Date(b.publishedAt).getTime() || 0;
+            return sortBy === "oldest" ? dA - dB : dB - dA;
+          });
+        }
+        groupArticlesByDate(articles = []) {
+          const map = new Map();
+          for (const a of articles) {
+            const key = a.dateKey || getLocalDateKey(a.publishedAt);
+            if (!map.has(key)) map.set(key, []);
+            map.get(key).push(a);
+          }
+          return Array.from(map.entries()).map(([dateKey, items]) => ({
+            dateKey,
+            heading: formatDateHeading(dateKey),
+            count: items.length,
+            articles: items,
+          }));
+        }
+      }
+      const searchSortService = new SearchSortService();
+
+      class BookmarkService {
+        constructor() {
+          this.memoryStore = [];
+          try {
+            const raw = localStorage.getItem("newsmag_saved_articles_v1");
+            if (raw) this.memoryStore = JSON.parse(raw) || [];
+          } catch {}
+        }
+        getAll() {
+          return [...this.memoryStore];
+        }
+        isBookmarked(article) {
+          if (!article) return false;
+          const k = article.url || article.title;
+          return this.memoryStore.some((i) => (i.url || i.title) === k);
+        }
+        toggle(article) {
+          const k = article.url || article.title;
+          const exists = this.isBookmarked(article);
+          if (exists) {
+            this.memoryStore = this.memoryStore.filter((i) => (i.url || i.title) !== k);
+            eventBus.emit(EVENTS.TOAST_NOTIFY, "Removed from Saved Reading List");
+          } else {
+            this.memoryStore = [{ ...article, savedAt: new Date().toISOString() }, ...this.memoryStore];
+            eventBus.emit(EVENTS.TOAST_NOTIFY, "Article saved to Reading List");
+          }
+          try {
+            localStorage.setItem("newsmag_saved_articles_v1", JSON.stringify(this.memoryStore));
+          } catch {}
+          eventBus.emit(EVENTS.BOOKMARKS_UPDATED, this.getAll());
+          return this.getAll();
+        }
+        clearAll() {
+          this.memoryStore = [];
+          try {
+            localStorage.setItem("newsmag_saved_articles_v1", "[]");
+          } catch {}
+          eventBus.emit(EVENTS.BOOKMARKS_UPDATED, []);
+          eventBus.emit(EVENTS.TOAST_NOTIFY, "Cleared all saved articles");
+        }
+      }
+      const bookmarkService = new BookmarkService();
+
+      // ============================================================================
+      // 3B. MICROSERVICE 6 & 7: AI EXECUTIVE BRIEF, IMPACT & AUDIO BRIEFING ENGINE
+      // ============================================================================
+      const MACRO_MARKET_PULSE = [
+        { label: "🇮🇳 NIFTY 50", val: "25,142.80", chg: "+0.68%", up: true, q: "Nifty" },
+        { label: "🇮🇳 SENSEX", val: "82,190.45", chg: "+0.62%", up: true, q: "Sensex" },
+        { label: "💱 USD / INR", val: "₹83.96", chg: "-0.04%", up: true, q: "Rupee" },
+        { label: "🏦 RBI REPO", val: "6.50%", chg: "Steady", up: true, q: "RBI" },
+        { label: "🛢️ BRENT CRUDE", val: "$77.40", chg: "-1.15%", up: false, q: "Oil" },
+        { label: "🪙 GOLD 24K (10g)", val: "₹76,450", chg: "+0.45%", up: true, q: "Gold" },
+        { label: "🌐 US FED RATE", val: "4.75–5.00%", chg: "-50 bps", up: true, q: "Fed" },
+      ];
+
+      const POSITIVE_PATTERNS = /\b(surge|soar|rally|gain|growth|record high|breakthrough|approve|launch|win|victory|boost|upgrade|profit|expansion|recovery|deal|innovation|milestone|ceasefire|peace|investment)\b/i;
+      const ALERT_PATTERNS = /\b(crash|plunge|drop|decline|crisis|war|attack|strike|sanction|inflation|deficit|arrest|detain|protest|probe|fraud|ban|warning|threat|killed|injured|disaster|flood|tariff|conflict|layoff)\b/i;
+
+      const IMPACT_LENSES = [
+        {
+          id: "markets",
+          label: "Markets & Monetary",
+          icon: "bi-graph-up-arrow",
+          pattern: /\b(rbi|sensex|nifty|sebi|rupee|gdp|inflation|fed|interest rate|bond|stock|market|ipo|fiscal|budget|tax|gst|trade|tariff|export|import|crude|oil|gold|imf|world bank|bank)\b/i,
+          indiaWhy: "Directly impacts Indian capital markets (Sensex/Nifty), rupee liquidity, or domestic fiscal/monetary conditions.",
+          macroWhy: "Shifts global capital flows, central bank rate expectations, or cross-border commodity pricing.",
+        },
+        {
+          id: "geopolitics",
+          label: "Geopolitics & Diplomacy",
+          icon: "bi-globe2",
+          pattern: /\b(summit|brics|g20|un|nato|treaty|sanction|border|defence|military|embassy|bilateral|foreign|diplomat|war|ceasefire|geopolit|jaishankar|modi|white house|kremlin|beijing)\b/i,
+          indiaWhy: "Shapes India's strategic posture, bilateral trade corridors, and national security calculus.",
+          macroWhy: "Alters sovereign alliances, global supply chain routing, and international diplomatic balance.",
+        },
+        {
+          id: "tech",
+          label: "AI & Frontier Tech",
+          icon: "bi-cpu",
+          pattern: /\b(ai|artificial intelligence|semiconductor|chip|nvidia|openai|cyber|digital|upi|startup|cloud|quantum|5g|6g|software|data|telecom|apple|google|microsoft|meta)\b/i,
+          indiaWhy: "Accelerates India's digital public infrastructure, IT services ecosystem, or domestic semiconductor mission.",
+          macroWhy: "Redefines global compute supply chains, enterprise productivity, and sovereign technology competition.",
+        },
+        {
+          id: "science",
+          label: "Space, Climate & Science",
+          icon: "bi-rocket-takeoff",
+          pattern: /\b(isro|nasa|space|satellite|rocket|lunar|gaganyaan|climate|solar|hydrogen|emission|quantum|research|genome|vaccine|medical|who|health)\b/i,
+          indiaWhy: "Advances India's scientific self-reliance, space economy, or public health resilience.",
+          macroWhy: "Represents a macro-level scientific, energy transition, or global health milestone.",
+        },
+        {
+          id: "governance",
+          label: "Governance & Law",
+          icon: "bi-bank2",
+          pattern: /\b(parliament|supreme court|high court|cabinet|ministry|election|bill|constitution|policy|governor|chief minister|nia|ed|cbi|law)\b/i,
+          indiaWhy: "Influences domestic regulatory frameworks, constitutional jurisprudence, or state-level administration.",
+          macroWhy: "Reflects institutional policy shifts with broader regulatory implications.",
+        },
+      ];
+
+      class IntelligenceService {
+        analyzeSentiment(article) {
+          const text = `${article?.title || ""} ${article?.description || ""}`;
+          const pos = (text.match(new RegExp(POSITIVE_PATTERNS, "gi")) || []).length;
+          const alt = (text.match(new RegExp(ALERT_PATTERNS, "gi")) || []).length;
+          if (pos > alt) return { id: "positive", label: "Positive / Constructive", shortLabel: "Positive" };
+          if (alt > pos) return { id: "alert", label: "High Alert / Risk Watch", shortLabel: "Risk Watch" };
+          return { id: "neutral", label: "Policy / Analytical", shortLabel: "Analytical" };
+        }
+        analyzeImpact(article) {
+          const text = `${article?.title || ""} ${article?.description || ""}`;
+          const isIndia = article?.scope === "INDIA";
+          for (const cat of IMPACT_LENSES) {
+            if (cat.pattern.test(text)) {
+              return { id: cat.id, label: cat.label, icon: cat.icon, whyItMatters: isIndia ? cat.indiaWhy : cat.macroWhy };
+            }
+          }
+          return {
+            id: "general",
+            label: isIndia ? "India National Desk" : "Global Macro Watch",
+            icon: isIndia ? "bi-flag-fill" : "bi-globe-americas",
+            whyItMatters: isIndia
+              ? "Key national development tracked across major Indian editorial desks."
+              : "Macro-level international development with cross-border strategic relevance.",
+          };
+        }
+        generateExecutiveBrief(article) {
+          if (!article) return null;
+          const title = (article.title || "").trim();
+          const desc = (article.description || "")
+            .replace(/^Live India Desk \([^)]+\):\s*/i, "")
+            .replace(/^Global Macro Briefing \([^)]+\):\s*/i, "")
+            .replace(/Click to read complete real-time coverage\.?/i, "")
+            .trim();
+          const source = article.source?.name || "Wire Desk";
+          const isIndia = article.scope === "INDIA";
+          const sentiment = this.analyzeSentiment(article);
+          const impact = this.analyzeImpact(article);
+          const sentences = desc
+            .split(/(?<=[.!?])\s+/)
+            .map((s) => s.trim())
+            .filter((s) => s.length > 20 && s.toLowerCase() !== title.toLowerCase());
+          return {
+            bullets: [
+              title.endsWith(".") ? title : `${title}.`,
+              sentences[0] || `Reported live by ${source} under ${isIndia ? "India National Coverage" : "Global Macro Intelligence"}.`,
+              impact.whyItMatters,
+            ],
+            sentiment,
+            impact,
+          };
+        }
+        extractTrendingTopics(articles = [], limit = 6) {
+          const counts = new Map();
+          const terms = ["RBI", "Sensex", "Nifty", "ISRO", "Parliament", "Supreme Court", "Modi", "Delhi", "Mumbai", "Bengaluru", "AI", "Semiconductor", "Oil", "Tariffs", "BRICS", "Fed", "Inflation", "Rupee", "Cricket"];
+          for (const a of articles) {
+            const text = `${a.title || ""} ${a.description || ""}`;
+            for (const t of terms) {
+              if (new RegExp(`\\b${t}\\b`, "i").test(text)) counts.set(t, (counts.get(t) || 0) + 1);
+            }
+          }
+          return Array.from(counts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, limit)
+            .map(([term, count]) => ({ term, count }));
+        }
+        extractPublishers(articles = []) {
+          const map = new Map();
+          for (const a of articles) {
+            const name = a?.source?.name || "News Wire";
+            map.set(name, (map.get(name) || 0) + 1);
+          }
+          return Array.from(map.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 8)
+            .map(([name, count]) => ({ name, count }));
+        }
+      }
+      const intelligenceService = new IntelligenceService();
+
+      class AudioBriefingService {
+        constructor() {
+          this.isPlaying = false;
+          this.activeTitle = "";
+          this.mode = "idle";
+          this.listeners = new Set();
+        }
+        subscribe(fn) {
+          this.listeners.add(fn);
+          fn({ isPlaying: this.isPlaying, activeTitle: this.activeTitle, mode: this.mode });
+          return () => this.listeners.delete(fn);
+        }
+        notify() {
+          const state = { isPlaying: this.isPlaying, activeTitle: this.activeTitle, mode: this.mode };
+          this.listeners.forEach((fn) => fn(state));
+        }
+        stop() {
+          if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+          this.isPlaying = false;
+          this.activeTitle = "";
+          this.mode = "idle";
+          this.notify();
+        }
+        speakArticle(article) {
+          if (!("speechSynthesis" in window) || !article) return;
+          if (this.isPlaying && this.activeTitle === article.title) {
+            this.stop();
+            return;
+          }
+          this.stop();
+          const brief = intelligenceService.generateExecutiveBrief(article);
+          const intro = article.scope === "INDIA" ? "India National Desk." : "Global Macro Watch.";
+          const u = new SpeechSynthesisUtterance(`${intro} Reported by ${article.source?.name || "News Wire"}. ${brief.bullets.join(" ")}`);
+          u.rate = 1.05;
+          this.isPlaying = true;
+          this.activeTitle = article.title;
+          this.mode = "single";
+          this.notify();
+          u.onend = () => this.stop();
+          u.onerror = () => this.stop();
+          window.speechSynthesis.speak(u);
+        }
+        playTopBriefing(articles = [], count = 5) {
+          if (!("speechSynthesis" in window)) return;
+          if (this.isPlaying && this.mode === "briefing") {
+            this.stop();
+            return;
+          }
+          this.stop();
+          const top = articles.slice(0, count);
+          if (!top.length) return;
+          this.isPlaying = true;
+          this.mode = "briefing";
+          this.activeTitle = "Top 5 Radio Briefing";
+          this.notify();
+          const segments = [
+            `Welcome to your NewsMag Live Audio Briefing. Here are the top ${top.length} India and Global Macro headlines.`,
+            ...top.map((a, i) => {
+              const brief = intelligenceService.generateExecutiveBrief(a);
+              return `Story ${i + 1} via ${a.source?.name || "Wire"}. ${a.title}. ${brief.impact.whyItMatters}`;
+            }),
+            "That concludes your live NewsMag briefing.",
+          ];
+          let idx = 0;
+          const next = () => {
+            if (!this.isPlaying || idx >= segments.length) {
+              this.stop();
+              return;
+            }
+            const u = new SpeechSynthesisUtterance(segments[idx++]);
+            u.rate = 1.05;
+            u.onend = () => next();
+            u.onerror = () => next();
+            window.speechSynthesis.speak(u);
+          };
+          next();
+        }
+      }
+      const audioBriefingService = new AudioBriefingService();
+
+      // ============================================================================
+      // 4. UI MICRO-FRONTEND COMPONENTS
+      // ============================================================================
+      const SubjectExplorer = ({ category, onSelectCategory, activeSubject, onSelectSubject }) => {
+        const [isExpanded, setIsExpanded] = useState(true);
+        const [customInput, setCustomInput] = useState("");
+        const [customSubjects, setCustomSubjects] = useState(() => {
+          try {
+            return JSON.parse(localStorage.getItem("newsmag_custom_subjects_v1") || "[]");
+          } catch {
+            return [];
+          }
+        });
+        const allSubjects = [...NEWS_SUBJECTS, ...customSubjects];
+
+        const handleAddCustom = (e) => {
+          e.preventDefault();
+          const trimmed = customInput.trim();
+          if (!trimmed) return;
+          const nextSubj = { id: `custom-${Date.now()}`, label: trimmed, icon: "bi-bookmark-heart-fill", category, query: trimmed, isCustom: true };
+          const updated = [...customSubjects, nextSubj];
+          setCustomSubjects(updated);
+          try {
+            localStorage.setItem("newsmag_custom_subjects_v1", JSON.stringify(updated));
+          } catch {}
+          setCustomInput("");
+          onSelectSubject(nextSubj);
+        };
+
+        return (
+          <section className="subject-explorer-section mb-4 p-3 p-md-4 rounded-4 border">
+            <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+              <div className="d-flex align-items-center gap-2">
+                <span className="section-icon-badge bg-danger text-white">
+                  <i className="bi bi-compass-fill"></i>
+                </span>
+                <div>
+                  <h5 className="fw-bold mb-0">
+                    Choose Your <span className="text-danger">News Subject</span>
+                  </h5>
+                  <span className="small text-secondary">
+                    Select an editorial desk, pick a specialized topic, or add your own custom subject
+                  </span>
+                </div>
+              </div>
+              <button type="button" className="btn btn-sm btn-outline-secondary rounded-pill" onClick={() => setIsExpanded(!isExpanded)}>
+                <i className={`bi ${isExpanded ? "bi-chevron-up" : "bi-chevron-down"} me-1`}></i>
+                {isExpanded ? "Hide Subjects" : "Show Subjects"}
+              </button>
+            </div>
+
+            {isExpanded && (
+              <>
+                <div className="row g-2 mb-3">
+                  {CATEGORIES.map((desk) => {
+                    const isSelected = category === desk.id && (!activeSubject || activeSubject.id === "all");
+                    return (
+                      <div className="col-6 col-sm-4 col-lg-3 col-xl" key={desk.id}>
+                        <button
+                          type="button"
+                          className={`subject-desk-card w-100 text-start p-3 rounded-3 h-100 ${isSelected ? "active" : ""}`}
+                          onMouseEnter={() => newsFeedService.prefetchOnHover({ category: desk.id })}
+                          onClick={() => {
+                            onSelectCategory(desk.id);
+                            onSelectSubject(NEWS_SUBJECTS[0]);
+                          }}
+                        >
+                          <div className="d-flex align-items-center justify-content-between mb-1">
+                            <span className="subject-desk-icon" style={{ color: desk.color }}>
+                              <i className={`bi ${desk.icon}`}></i>
+                            </span>
+                            {category === desk.id && <span className="badge rounded-pill bg-danger">Active</span>}
+                          </div>
+                          <div className="fw-bold small mb-1">{desk.label}</div>
+                          <div className="subject-desk-desc text-secondary">{desk.desc}</div>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-3 border-top">
+                  <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                    <span className="small fw-semibold text-uppercase text-secondary">
+                      <i className="bi bi-tags-fill text-danger me-1"></i>
+                      Specialized Subjects &amp; Interests:
+                    </span>
+                    <form className="d-flex align-items-center gap-1" onSubmit={handleAddCustom}>
+                      <input
+                        type="text"
+                        className="form-control form-control-sm edition-select rounded-pill px-3"
+                        placeholder="+ Add custom subject (e.g. Formula 1, EV)..."
+                        value={customInput}
+                        onChange={(e) => setCustomInput(e.target.value)}
+                        style={{ minWidth: "230px" }}
+                      />
+                      <button type="submit" className="btn btn-sm btn-danger rounded-pill px-3">Add</button>
+                    </form>
+                  </div>
+
+                  <div className="d-flex flex-wrap gap-2 mt-2">
+                    {allSubjects.map((subj) => {
+                      const active = (activeSubject?.id || "all") === subj.id;
+                      return (
+                        <button
+                          key={subj.id}
+                          type="button"
+                          className={`btn btn-sm rounded-pill d-inline-flex align-items-center gap-1 ${active ? "btn-danger fw-semibold" : "btn-outline-secondary"}`}
+                          onMouseEnter={() =>
+                            newsFeedService.prefetchOnHover({
+                              category: subj.category && subj.category !== "all" ? subj.category : category,
+                              remoteSearchQuery: subj.query || "",
+                            })
+                          }
+                          onClick={() => {
+                            if (subj.category && subj.category !== "all") onSelectCategory(subj.category);
+                            onSelectSubject(subj);
+                          }}
+                        >
+                          <i className={`bi ${subj.icon}`}></i>
+                          <span>{subj.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
+          </section>
+        );
+      };
+
+      const NewsItem = ({ article, category, isBookmarked, onToggleBookmark, onSelectArticle, audioState }) => {
+        const fallbackImg = CATEGORY_FALLBACK_IMAGES[article.category || category] || CATEGORY_FALLBACK_IMAGES.general;
+        const [imgSrc, setImgSrc] = useState(article.urlToImage || fallbackImg);
+        useEffect(() => {
+          setImgSrc(article.urlToImage || fallbackImg);
+        }, [article.urlToImage, fallbackImg]);
+
+        const exactDateTime = formatExactDateTime(article.publishedAt);
+        const timeAgo = formatRelativeTime(article.publishedAt);
+        const readTime = estimateReadingTime(article);
+        const impact = useMemo(() => intelligenceService.analyzeImpact(article), [article]);
+        const sentiment = useMemo(() => intelligenceService.analyzeSentiment(article), [article]);
+        const isSpeaking = audioState?.isPlaying && audioState?.activeTitle === article.title;
+
+        return (
+          <article className="news-card h-100 d-flex flex-column">
+            <div className="news-card-media" onClick={() => onSelectArticle(article)} role="button">
+              <img src={imgSrc} className="news-card-img" alt={article.title} loading="lazy" onError={() => setImgSrc(fallbackImg)} />
+              <div className="news-card-media-gradient" />
+              <span className="news-source-pill">
+                {article.isRealtimeStream && <span className="live-dot me-1" style={{ width: "6px", height: "6px" }}></span>}
+                {article.scope === "INDIA" ? "🇮🇳 " : "🌐 "}
+                {article.source?.name || "News Desk"}
+              </span>
+              <button
+                type="button"
+                className={`news-bookmark-floating ${isBookmarked ? "bookmarked" : ""}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleBookmark(article);
+                }}
+              >
+                <i className={`bi ${isBookmarked ? "bi-bookmark-fill" : "bi-bookmark"}`}></i>
+              </button>
+            </div>
+            <div className="news-card-body d-flex flex-column flex-grow-1 p-3">
+              <div className="d-flex flex-wrap align-items-center justify-content-between text-secondary small mb-2 gap-1">
+                <span className="d-inline-flex flex-wrap align-items-center gap-1">
+                  {article.scope === "INDIA" ? (
+                    <span className="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">
+                      🇮🇳 INDIA
+                    </span>
+                  ) : (
+                    <span className="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">
+                      🌐 MACRO
+                    </span>
+                  )}
+                  {article.isJustIn && <span className="badge bg-danger text-white">JUST IN</span>}
+                  <span className="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25" title={impact.whyItMatters}>
+                    <i className={`bi ${impact.icon} me-1`}></i>{impact.label}
+                  </span>
+                </span>
+                <span className="badge bg-secondary bg-opacity-10 text-secondary fw-normal">
+                  {timeAgo} • {readTime}
+                </span>
+              </div>
+              <h5 className="news-card-title mb-2" onClick={() => onSelectArticle(article)} role="button">
+                {article.title.length > 88 ? `${article.title.slice(0, 88)}...` : article.title}
+              </h5>
+              <p className="news-card-desc flex-grow-1 mb-2">
+                {article.description.length > 115 ? `${article.description.slice(0, 115)}...` : article.description}
+              </p>
+              <div className="d-flex align-items-center justify-content-between small text-secondary mb-2">
+                <span style={{ fontSize: "0.73rem" }}><i className="bi bi-clock-history me-1 text-danger"></i>{exactDateTime}</span>
+                <span className={`badge rounded-pill ${sentiment.id === "positive" ? "bg-success bg-opacity-10 text-success" : sentiment.id === "alert" ? "bg-warning bg-opacity-10 text-warning" : "bg-secondary bg-opacity-10 text-secondary"}`} style={{ fontSize: "0.68rem" }}>
+                  {sentiment.shortLabel}
+                </span>
+              </div>
+              <div className="news-card-footer d-flex align-items-center justify-content-between gap-2 pt-2 border-top mt-auto">
+                <div className="d-flex align-items-center gap-1">
+                  <button type="button" className="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" onClick={() => onSelectArticle(article)} title="View 60-word AI Executive Brief">
+                    <i className="bi bi-stars text-danger"></i> Brief
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${isSpeaking ? "btn-danger" : "btn-outline-secondary"} d-inline-flex align-items-center gap-1`}
+                    onClick={() => audioBriefingService.speakArticle(article)}
+                    title="Listen to audio brief"
+                  >
+                    <i className={`bi ${isSpeaking ? "bi-stop-fill" : "bi-volume-up"}`}></i>
+                  </button>
+                </div>
+                <a href={article.url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-danger d-inline-flex align-items-center gap-1 ms-auto">
+                  Read More <i className="bi bi-arrow-up-right"></i>
+                </a>
+              </div>
+            </div>
+          </article>
+        );
+      };
+
+      const App = () => {
+        const [category, setCategory] = useState("general");
+        const [searchQuery, setSearchQuery] = useState("");
+        const [country, setCountry] = useState("in");
+        const [scopeFilter, setScopeFilter] = useState("all");
+        const [publisherFilter, setPublisherFilter] = useState("all");
+        const [activeView, setActiveView] = useState("feed");
+        const [selectedArticle, setSelectedArticle] = useState(null);
+        const [fontScale, setFontScale] = useState("md");
+        const [copiedLink, setCopiedLink] = useState(false);
+        const [audioState, setAudioState] = useState({ isPlaying: false, activeTitle: "", mode: "idle" });
+        const [theme, setTheme] = useState("dark");
+        const [bookmarks, setBookmarks] = useState(() => bookmarkService.getAll());
+        const [activeSubject, setActiveSubject] = useState(NEWS_SUBJECTS[0]);
+        const [articles, setArticles] = useState(
+          () => newsFeedService.getInstantSnapshot({ category: "general", country: "in" }).articles
+        );
+        const [loading, setLoading] = useState(false);
+        const [latencyMs, setLatencyMs] = useState(0);
+        const [autoSync, setAutoSync] = useState(true);
+        const [pulseCount, setPulseCount] = useState(0);
+        const [newLiveCount, setNewLiveCount] = useState(0);
+        const [lastSyncTime, setLastSyncTime] = useState(() => new Date().toLocaleTimeString());
+        const [datePreset, setDatePreset] = useState("all");
+        const [customFromDate, setCustomFromDate] = useState("");
+        const [customToDate, setCustomToDate] = useState(() => getLocalDateKey(new Date().toISOString()));
+        const [groupByDate, setGroupByDate] = useState(true);
+        const [sortBy, setSortBy] = useState("publishedAt");
+
+        useEffect(() => {
+          document.documentElement.setAttribute("data-bs-theme", theme);
+          document.documentElement.setAttribute("data-theme", theme);
+        }, [theme]);
+
+        useEffect(() => {
+          return eventBus.on(EVENTS.BOOKMARKS_UPDATED, setBookmarks);
+        }, []);
+
+        useEffect(() => {
+          return audioBriefingService.subscribe(setAudioState);
+        }, []);
+
+        const fetchNews = useCallback(async (force = false) => {
+          const bounds = searchSortService.resolveDateBounds(datePreset, customFromDate, customToDate);
+          const snap = newsFeedService.getInstantSnapshot({
+            category,
+            country,
+            fromDate: bounds.fromKey,
+            toDate: bounds.toKey,
+            remoteSearchQuery: activeSubject?.query || "",
+          });
+          if (snap?.articles?.length > 0) {
+            setArticles(snap.articles);
+            setLatencyMs(snap.latencyMs ?? 0);
+            setLoading(false);
+          }
+          const res = await newsFeedService.getHeadlines({
+            category,
+            country,
+            fromDate: bounds.fromKey,
+            toDate: bounds.toKey,
+            remoteSearchQuery: activeSubject?.query || "",
+            forceRefresh: force,
+            onPartialUpdate: (partial) => {
+              if (partial?.articles?.length > 0) {
+                setArticles(partial.articles);
+                setLatencyMs(partial.latencyMs ?? 0);
+                setLoading(false);
+              }
+            },
+          });
+          setArticles(res.articles || []);
+          setLatencyMs(res.latencyMs ?? 0);
+          setLastSyncTime(new Date().toLocaleTimeString());
+          setLoading(false);
+        }, [category, country, datePreset, customFromDate, customToDate, activeSubject]);
+
+        useEffect(() => {
+          fetchNews(false);
+        }, [fetchNews]);
+
+        // Continuous Real-Time Global Push Stream (Server-Sent Events /api/live-stream + 10s Live Poller)
+        useEffect(() => {
+          if (!autoSync || activeView !== "feed") return;
+          const q = activeSubject?.query || "";
+          const params = new URLSearchParams({ category, country, q });
+          let es = null;
+
+          const applyIncoming = (incoming) => {
+            if (!Array.isArray(incoming) || incoming.length === 0) return;
+            setArticles((prev) => {
+              const prevNorms = new Set(
+                prev.map((a) => String(a?.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 60))
+              );
+              const normalized = incoming.map((a) => newsFeedService.normalizeArticle(a, category));
+              const newlyFound = normalized.filter((a) => {
+                const n = a.title.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 60);
+                return n && !prevNorms.has(n);
+              });
+              if (newlyFound.length > 0) {
+                setNewLiveCount((c) => c + newlyFound.length);
+              }
+              return newsFeedService.deduplicateArticles([...normalized, ...prev], category);
+            });
+            setPulseCount((c) => c + 1);
+            setLastSyncTime(new Date().toLocaleTimeString());
+          };
+
+          if ("EventSource" in window) {
+            try {
+              es = new EventSource(`/api/live-stream?${params.toString()}`);
+              es.addEventListener("realtime_feed", (ev) => {
+                try {
+                  const data = JSON.parse(ev.data);
+                  if (data?.status === "ok" && Array.isArray(data.articles)) {
+                    applyIncoming(data.articles);
+                  }
+                } catch {}
+              });
+              es.onerror = () => {
+                try { es.close(); } catch {}
+              };
+            } catch {}
+          }
+
+          const pollId = setInterval(async () => {
+            try {
+              const d = await fetch(`/api/fast-news?${params.toString()}&force=0`).then((r) => (r.ok ? r.json() : null));
+              if (d?.status === "ok" && Array.isArray(d.articles)) {
+                applyIncoming(d.articles);
+              }
+            } catch {}
+          }, 10000);
+
+          return () => {
+            if (es) {
+              try { es.close(); } catch {}
+            }
+            clearInterval(pollId);
+          };
+        }, [autoSync, activeView, category, country, activeSubject]);
+
+        const baseList = activeView === "bookmarks" ? bookmarks : articles;
+        const indiaCount = useMemo(() => baseList.filter((a) => a.scope === "INDIA").length, [baseList]);
+        const macroCount = useMemo(() => baseList.filter((a) => a.scope !== "INDIA").length, [baseList]);
+        const publishersList = useMemo(() => intelligenceService.extractPublishers(baseList), [baseList]);
+        const trendingTopics = useMemo(() => intelligenceService.extractTrendingTopics(baseList, 6), [baseList]);
+
+        const filtered = useMemo(() => {
+          let scoped =
+            scopeFilter === "all"
+              ? baseList
+              : baseList.filter((a) => (scopeFilter === "INDIA" ? a.scope === "INDIA" : a.scope !== "INDIA"));
+          if (publisherFilter !== "all") {
+            scoped = scoped.filter((a) => (a.source?.name || "News Wire") === publisherFilter);
+          }
+          return searchSortService.queryAndSort(scoped, { searchQuery, sortBy, datePreset, customFromDate, customToDate });
+        }, [baseList, scopeFilter, publisherFilter, searchQuery, sortBy, datePreset, customFromDate, customToDate]);
+
+        const dateGroups = useMemo(() => searchSortService.groupArticlesByDate(filtered), [filtered]);
+        const selectedBrief = useMemo(
+          () => (selectedArticle ? intelligenceService.generateExecutiveBrief(selectedArticle) : null),
+          [selectedArticle]
+        );
+
+        return (
+          <div className={`app-shell theme-${theme} min-vh-100 d-flex flex-column`}>
+            <header className="news-header sticky-top">
+              <div className="news-topbar py-1 px-3 border-bottom">
+                <div className="container-xl d-flex flex-wrap align-items-center justify-content-between gap-2">
+                  <div className="d-flex align-items-center gap-3 small">
+                    <span className="d-inline-flex align-items-center gap-1 fw-medium text-danger">
+                      <span className="live-dot"></span> 🇮🇳 INDIA PRIMARY + 🌐 MACRO GLOBAL STREAM
+                    </span>
+                    <span className="text-secondary d-none d-md-inline">
+                      Auto-Stream {autoSync ? "ACTIVE (Every 8s)" : "PAUSED"} • Last Sync: {lastSyncTime}
+                    </span>
+                  </div>
+                  <div className="d-flex align-items-center gap-2">
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${autoSync ? "btn-outline-success" : "btn-outline-secondary"}`}
+                      onClick={() => setAutoSync(!autoSync)}
+                    >
+                      <i className="bi bi-broadcast me-1"></i>
+                      {autoSync ? "Live Stream: ON" : "Live Stream: OFF"}
+                    </button>
+                    <select className="form-select form-select-sm edition-select" value={country} onChange={(e) => setCountry(e.target.value)}>
+                      {COUNTRIES.map((c) => (
+                        <option key={c.code} value={c.code}>{c.flag} {c.label}</option>
+                      ))}
+                    </select>
+                    <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setActiveView(activeView === "bookmarks" ? "feed" : "bookmarks")}>
+                      <i className="bi bi-bookmark me-1"></i> Saved ({bookmarks.length})
+                    </button>
+                    <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                      <i className={`bi ${theme === "dark" ? "bi-sun-fill text-warning" : "bi-moon-stars-fill"}`}></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <nav className="navbar navbar-expand-lg py-2 px-3">
+                <div className="container-xl">
+                  <a className="navbar-brand d-flex align-items-center gap-2 me-4" href="#top">
+                    <span className="brand-mark"><i className="bi bi-lightning-charge-fill"></i></span>
+                    <div className="d-flex flex-column">
+                      <span className="brand-title">News<span className="text-danger">Mag</span></span>
+                      <span className="brand-subtitle">INDIA &amp; MACRO BRIEFING</span>
+                    </div>
+                  </a>
+                  <div className="collapse navbar-collapse show">
+                    <ul className="navbar-nav me-auto mb-2 mb-lg-0 gap-1 flex-row flex-wrap">
+                      {CATEGORIES.map((cat) => (
+                        <li className="nav-item" key={cat.id}>
+                          <button
+                            type="button"
+                            className={`nav-link category-pill ${category === cat.id ? "active" : ""}`}
+                            onMouseEnter={() => newsFeedService.prefetchOnHover({ category: cat.id, country })}
+                            onClick={() => setCategory(cat.id)}
+                          >
+                            <i className={`bi ${cat.icon} me-1`}></i>{cat.label}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="input-group input-group-sm news-search-group" style={{ maxWidth: "280px" }}>
+                      <span className="input-group-text bg-transparent border-end-0"><i className="bi bi-search text-secondary"></i></span>
+                      <input type="search" className="form-control border-start-0 ps-0" placeholder="Search India & macro news..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+              </nav>
+            </header>
+
+            <main className="container-xl py-4 flex-grow-1">
+              {/* Macro Market Pulse + Hands-Free Audio Briefing Strip */}
+              {activeView === "feed" && (
+                <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3 p-2 px-3 rounded-3 border bg-body-tertiary">
+                  <div className="d-flex align-items-center gap-2 flex-wrap">
+                    <span className="badge bg-dark border border-secondary border-opacity-50 text-uppercase px-2 py-1">
+                      <i className="bi bi-graph-up-arrow text-danger me-1"></i>Macro Pulse
+                    </span>
+                    {MACRO_MARKET_PULSE.map((item) => (
+                      <button
+                        key={item.label}
+                        type="button"
+                        className="btn btn-sm py-0 px-2 border rounded-pill d-inline-flex align-items-center gap-1 small"
+                        onClick={() => setSearchQuery(searchQuery === item.q ? "" : item.q)}
+                        title={`Click to filter news about ${item.q}`}
+                      >
+                        <span className="fw-semibold">{item.label}</span>
+                        <span className="text-secondary">{item.val}</span>
+                        <span className={`fw-bold ${item.up ? "text-success" : "text-danger"}`}>{item.chg}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className={`btn btn-sm rounded-pill d-inline-flex align-items-center gap-1 px-3 fw-semibold ${audioState.isPlaying && audioState.mode === "briefing" ? "btn-danger" : "btn-outline-danger"}`}
+                    onClick={() => audioBriefingService.playTopBriefing(filtered, 5)}
+                  >
+                    <i className={`bi ${audioState.isPlaying && audioState.mode === "briefing" ? "bi-stop-circle-fill" : "bi-headphones"}`}></i>
+                    {audioState.isPlaying && audioState.mode === "briefing" ? "Stop Radio Briefing" : "🎧 Listen Top 5 Briefing"}
+                  </button>
+                </div>
+              )}
+
+              {articles.length > 0 && activeView === "feed" && (
+                <div className="date-filter-bar mb-3 p-2 px-3 rounded-3 border d-flex flex-wrap align-items-center justify-content-between gap-2">
+                  <div className="d-flex align-items-center gap-2 flex-grow-1 overflow-hidden">
+                    <span className="badge bg-danger text-uppercase px-2 py-1 d-inline-flex align-items-center gap-1 flex-shrink-0">
+                      <span className="live-dot" style={{ width: "6px", height: "6px", backgroundColor: "#fff" }}></span>
+                      🇮🇳 INDIA + 🌐 MACRO WIRE
+                    </span>
+                    <div className="text-truncate small">
+                      {articles.slice(0, 4).map((item, idx) => (
+                        <span key={idx} className="me-4" style={{ cursor: "pointer" }} onClick={() => setSelectedArticle(item)}>
+                          <strong className="text-danger me-1">
+                            {item.scope === "INDIA" ? "🇮🇳" : "🌐"} [{formatRelativeTime(item.publishedAt)}] {item.source?.name}:
+                          </strong>
+                          <span>{item.title}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="d-flex align-items-center gap-2 small flex-shrink-0">
+                    {newLiveCount > 0 && (
+                      <span className="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">
+                        +{newLiveCount} New Live
+                      </span>
+                    )}
+                    <span className="badge bg-secondary bg-opacity-10 text-secondary">
+                      Latency: {latencyMs}ms • Pulse #{pulseCount}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <SubjectExplorer category={category} onSelectCategory={setCategory} activeSubject={activeSubject} onSelectSubject={setActiveSubject} />
+
+              <div className="date-filter-bar p-3 mb-4 rounded-4 border d-flex flex-column gap-3">
+                <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 pb-2 border-bottom">
+                  <div className="d-flex flex-wrap align-items-center gap-2">
+                    <span className="small fw-semibold text-secondary me-1">Coverage Mix:</span>
+                    <button
+                      type="button"
+                      className={`btn btn-sm rounded-pill ${scopeFilter === "all" ? "btn-danger fw-semibold" : "btn-outline-secondary"}`}
+                      onClick={() => setScopeFilter("all")}
+                    >
+                      🇮🇳 Mostly India + 🌐 Macro World ({baseList.length})
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-sm rounded-pill ${scopeFilter === "INDIA" ? "btn-success fw-semibold" : "btn-outline-secondary"}`}
+                      onClick={() => setScopeFilter("INDIA")}
+                    >
+                      🇮🇳 India Only ({indiaCount})
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-sm rounded-pill ${scopeFilter === "MACRO_GLOBAL" ? "btn-info text-dark fw-semibold" : "btn-outline-secondary"}`}
+                      onClick={() => setScopeFilter("MACRO_GLOBAL")}
+                    >
+                      🌐 Macro International Only ({macroCount})
+                    </button>
+                  </div>
+                  <span className="small text-secondary d-none d-lg-inline">
+                    <strong>80% India National/Economy</strong> + <strong>20% Macro Global Impact</strong>
+                  </span>
+                </div>
+
+                {/* Publisher Wire Filter & Trending Entities Row */}
+                <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 pb-2 border-bottom">
+                  <div className="d-flex flex-wrap align-items-center gap-1">
+                    <span className="small fw-semibold text-secondary me-1"><i className="bi bi-building text-danger me-1"></i>Publisher:</span>
+                    <button type="button" className={`btn btn-sm py-0 px-2 rounded-pill ${publisherFilter === "all" ? "btn-dark" : "btn-outline-secondary"}`} onClick={() => setPublisherFilter("all")}>
+                      All Wires
+                    </button>
+                    {publishersList.slice(0, 6).map((pub) => (
+                      <button
+                        key={pub.name}
+                        type="button"
+                        className={`btn btn-sm py-0 px-2 rounded-pill ${publisherFilter === pub.name ? "btn-danger" : "btn-outline-secondary"}`}
+                        onClick={() => setPublisherFilter(publisherFilter === pub.name ? "all" : pub.name)}
+                      >
+                        {pub.name} ({pub.count})
+                      </button>
+                    ))}
+                  </div>
+                  {trendingTopics.length > 0 && (
+                    <div className="d-flex flex-wrap align-items-center gap-1">
+                      <span className="small fw-semibold text-secondary me-1"><i className="bi bi-fire text-warning me-1"></i>Trending:</span>
+                      {trendingTopics.map((t) => (
+                        <button
+                          key={t.term}
+                          type="button"
+                          className={`btn btn-sm py-0 px-2 rounded-pill ${searchQuery.toLowerCase() === t.term.toLowerCase() ? "btn-warning text-dark fw-semibold" : "btn-outline-secondary"}`}
+                          onClick={() => setSearchQuery(searchQuery.toLowerCase() === t.term.toLowerCase() ? "" : t.term)}
+                        >
+                          #{t.term}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                  <div className="d-flex flex-wrap align-items-center gap-2">
+                    <span className="small fw-semibold text-secondary me-1"><i className="bi bi-calendar-check text-danger me-1"></i>Timeline:</span>
+                    {DATE_PRESETS.map((p) => (
+                      <button key={p.id} type="button" className={`btn btn-sm rounded-pill ${datePreset === p.id ? "btn-danger fw-semibold" : "btn-outline-secondary"}`} onClick={() => setDatePreset(p.id)}>
+                        <i className={`bi ${p.icon} me-1`}></i>{p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="d-flex align-items-center gap-2">
+                    <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setGroupByDate(!groupByDate)}>
+                      Group by Date: {groupByDate ? "ON" : "OFF"}
+                    </button>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => fetchNews(true)}>
+                      <i className="bi bi-arrow-clockwise me-1"></i>Sync Live
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="text-center py-5">
+                  <div className="spinner-border text-danger mb-3" role="status"></div>
+                  <div className="text-secondary">Streaming real-time global headlines...</div>
+                </div>
+              ) : groupByDate ? (
+                dateGroups.map((group) => (
+                  <section key={group.dateKey} className="mb-5">
+                    <div className="d-flex align-items-center justify-content-between mb-3 pb-2 border-bottom">
+                      <div className="d-flex align-items-center gap-2">
+                        <span className="badge rounded-pill bg-danger px-3 py-2">{group.dateKey}</span>
+                        <h4 className="fw-bold mb-0 fs-5">{group.heading}</h4>
+                      </div>
+                      <span className="badge bg-secondary bg-opacity-25 text-body rounded-pill">{group.count} stories</span>
+                    </div>
+                    <div className="row g-4">
+                      {group.articles.map((art, i) => (
+                        <div className="col-12 col-sm-6 col-lg-4" key={i}>
+                          <NewsItem
+                            article={art}
+                            category={category}
+                            isBookmarked={bookmarkService.isBookmarked(art)}
+                            onToggleBookmark={(a) => bookmarkService.toggle(a)}
+                            onSelectArticle={setSelectedArticle}
+                            audioState={audioState}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))
+              ) : (
+                <div className="row g-4">
+                  {filtered.map((art, i) => (
+                    <div className="col-12 col-sm-6 col-lg-4" key={i}>
+                      <NewsItem
+                        article={art}
+                        category={category}
+                        isBookmarked={bookmarkService.isBookmarked(art)}
+                        onToggleBookmark={(a) => bookmarkService.toggle(a)}
+                        onSelectArticle={setSelectedArticle}
+                        audioState={audioState}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </main>
+
+            {selectedArticle && (
+              <div className="article-modal-backdrop" onClick={() => { audioBriefingService.stop(); setSelectedArticle(null); }}>
+                <div className="article-modal-card" onClick={(e) => e.stopPropagation()}>
+                  <div className="article-modal-media">
+                    <img
+                      src={selectedArticle.urlToImage || CATEGORY_FALLBACK_IMAGES[category]}
+                      alt={selectedArticle.title}
+                      className="article-modal-img"
+                    />
+                    <div className="article-modal-media-overlay" />
+                    <button type="button" className="article-modal-close" onClick={() => { audioBriefingService.stop(); setSelectedArticle(null); }}>
+                      <i className="bi bi-x-lg"></i>
+                    </button>
+                    <div className="article-modal-badges d-flex flex-wrap gap-2">
+                      {selectedArticle.scope === "INDIA" ? (
+                        <span className="badge rounded-pill bg-success px-3 py-2">🇮🇳 INDIA NATIONAL</span>
+                      ) : (
+                        <span className="badge rounded-pill bg-info text-dark px-3 py-2">🌐 MACRO GLOBAL</span>
+                      )}
+                      <span className="badge rounded-pill bg-danger px-3 py-2">{selectedArticle.source?.name || "News Desk"}</span>
+                      <span className="badge rounded-pill bg-dark bg-opacity-75 px-3 py-2">{formatExactDateTime(selectedArticle.publishedAt)}</span>
+                    </div>
+                  </div>
+                  <div className="article-modal-body" style={fontScale === "lg" ? { fontSize: "1.12rem" } : fontScale === "sm" ? { fontSize: "0.92rem" } : {}}>
+                    <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3 pb-2 border-bottom">
+                      <span className="small text-secondary">
+                        <i className="bi bi-clock me-1"></i>{estimateReadingTime(selectedArticle)} • {formatRelativeTime(selectedArticle.publishedAt)}
+                      </span>
+                      <div className="d-flex align-items-center gap-2">
+                        <button
+                          type="button"
+                          className={`btn btn-sm rounded-pill ${audioState.isPlaying && audioState.activeTitle === selectedArticle.title ? "btn-danger" : "btn-outline-danger"}`}
+                          onClick={() => audioBriefingService.speakArticle(selectedArticle)}
+                        >
+                          <i className={`bi ${audioState.isPlaying && audioState.activeTitle === selectedArticle.title ? "bi-stop-circle-fill" : "bi-volume-up-fill"} me-1`}></i>
+                          {audioState.isPlaying && audioState.activeTitle === selectedArticle.title ? "Stop Audio" : "Listen"}
+                        </button>
+                        <div className="btn-group btn-group-sm">
+                          {["sm", "md", "lg"].map((sz) => (
+                            <button key={sz} type="button" className={`btn ${fontScale === sz ? "btn-secondary" : "btn-outline-secondary"}`} onClick={() => setFontScale(sz)}>
+                              {sz === "sm" ? "A-" : sz === "md" ? "A" : "A+"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <h3 className="article-modal-title mb-3">{selectedArticle.title}</h3>
+
+                    {selectedBrief && (
+                      <div className="p-3 rounded-4 mb-3" style={{ background: "rgba(239, 68, 68, 0.06)", border: "1px solid rgba(239, 68, 68, 0.22)" }}>
+                        <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                          <span className="text-uppercase small fw-bold text-danger">
+                            <i className="bi bi-stars me-1"></i>60-Word Executive Brief &amp; Key Takeaways
+                          </span>
+                          <div className="d-flex align-items-center gap-2">
+                            <span className="badge rounded-pill text-bg-dark border border-secondary border-opacity-25">
+                              <i className={`bi ${selectedBrief.impact.icon} me-1`}></i>{selectedBrief.impact.label}
+                            </span>
+                            <span className="badge rounded-pill text-bg-secondary">{selectedBrief.sentiment.label}</span>
+                          </div>
+                        </div>
+                        <ul className="mb-0 ps-3 small" style={{ lineHeight: 1.65 }}>
+                          {selectedBrief.bullets.map((b, idx) => (
+                            <li key={idx} className="mb-1">
+                              {idx === 2 ? (<><strong className="text-info">Why It Matters: </strong>{b}</>) : b}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <p className="article-modal-lead mb-3">{selectedArticle.description}</p>
+                    {selectedArticle.content && (
+                      <div className="article-modal-content-box mb-4">
+                        <p className="mb-0">{cleanArticleContent(selectedArticle.content, selectedArticle.description)}</p>
+                      </div>
+                    )}
+                    <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-3 border-top">
+                      <div className="d-flex flex-wrap align-items-center gap-2">
+                        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => bookmarkService.toggle(selectedArticle)}>
+                          <i className="bi bi-bookmark me-1"></i>
+                          {bookmarkService.isBookmarked(selectedArticle) ? "Saved" : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(selectedArticle.url);
+                              setCopiedLink(true);
+                              setTimeout(() => setCopiedLink(false), 2000);
+                            } catch {}
+                          }}
+                        >
+                          <i className="bi bi-link-45deg me-1"></i>{copiedLink ? "Copied!" : "Copy Link"}
+                        </button>
+                        <a
+                          href={`https://wa.me/?text=${encodeURIComponent(selectedArticle.title + " " + selectedArticle.url)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-sm btn-outline-success"
+                        >
+                          <i className="bi bi-whatsapp me-1"></i>WhatsApp
+                        </a>
+                        <a
+                          href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(selectedArticle.title)}&url=${encodeURIComponent(selectedArticle.url)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-sm btn-outline-info"
+                        >
+                          <i className="bi bi-twitter-x me-1"></i>Post
+                        </a>
+                      </div>
+                      <a href={selectedArticle.url} target="_blank" rel="noopener noreferrer" className="btn btn-danger px-4">
+                        Read Full Story at Source <i className="bi bi-box-arrow-up-right ms-1"></i>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
