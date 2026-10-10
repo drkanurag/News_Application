@@ -475,15 +475,45 @@
 
       const LIVE_RSS_FEEDS = {
         general: [
-          { url: "https://feeds.bbci.co.uk/news/world/rss.xml", sourceName: "BBC World News" },
-          { url: "https://feeds.feedburner.com/ndtvnews-top-stories", sourceName: "NDTV Live" },
+          { url: "https://www.thehindu.com/news/national/feeder/default.rss", sourceName: "The Hindu", scope: "INDIA" },
+          { url: "https://indianexpress.com/section/india/feed/", sourceName: "The Indian Express", scope: "INDIA" },
+          { url: "https://feeds.feedburner.com/ndtvnews-india-news", sourceName: "NDTV India", scope: "INDIA" },
+          { url: "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms", sourceName: "Times of India", scope: "INDIA" },
+          { url: "https://feeds.bbci.co.uk/news/world/rss.xml", sourceName: "BBC World Macro", scope: "MACRO_GLOBAL" },
         ],
-        technology: [{ url: "https://feeds.bbci.co.uk/news/technology/rss.xml", sourceName: "BBC Technology" }],
-        business: [{ url: "https://feeds.bbci.co.uk/news/business/rss.xml", sourceName: "BBC Business" }],
-        science: [{ url: "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml", sourceName: "BBC Science" }],
-        health: [{ url: "https://feeds.bbci.co.uk/news/health/rss.xml", sourceName: "BBC Health" }],
-        sports: [{ url: "https://feeds.bbci.co.uk/sport/rss.xml", sourceName: "BBC Sport" }],
-        entertainment: [{ url: "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml", sourceName: "BBC Arts" }],
+        technology: [
+          { url: "https://indianexpress.com/section/technology/feed/", sourceName: "Indian Express Tech", scope: "INDIA" },
+          { url: "https://feeds.feedburner.com/gadgets360-latest", sourceName: "NDTV Gadgets 360", scope: "INDIA" },
+          { url: "https://www.thehindu.com/sci-tech/technology/feeder/default.rss", sourceName: "The Hindu Tech", scope: "INDIA" },
+          { url: "https://feeds.bbci.co.uk/news/technology/rss.xml", sourceName: "BBC Global Tech", scope: "MACRO_GLOBAL" },
+        ],
+        business: [
+          { url: "https://www.thehindu.com/business/feeder/default.rss", sourceName: "The Hindu Business", scope: "INDIA" },
+          { url: "https://indianexpress.com/section/business/feed/", sourceName: "Indian Express Economy", scope: "INDIA" },
+          { url: "https://feeds.feedburner.com/ndtvprofit-latest", sourceName: "NDTV Profit", scope: "INDIA" },
+          { url: "https://feeds.bbci.co.uk/news/business/rss.xml", sourceName: "BBC Global Economy", scope: "MACRO_GLOBAL" },
+        ],
+        science: [
+          { url: "https://www.thehindu.com/sci-tech/science/feeder/default.rss", sourceName: "The Hindu Science", scope: "INDIA" },
+          { url: "https://indianexpress.com/section/technology/science/feed/", sourceName: "Indian Express Science", scope: "INDIA" },
+          { url: "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml", sourceName: "BBC Science & Climate", scope: "MACRO_GLOBAL" },
+        ],
+        health: [
+          { url: "https://www.thehindu.com/sci-tech/health/feeder/default.rss", sourceName: "The Hindu Health", scope: "INDIA" },
+          { url: "https://indianexpress.com/section/lifestyle/health/feed/", sourceName: "Indian Express Health", scope: "INDIA" },
+          { url: "https://feeds.bbci.co.uk/news/health/rss.xml", sourceName: "BBC Global Health", scope: "MACRO_GLOBAL" },
+        ],
+        sports: [
+          { url: "https://www.thehindu.com/sport/feeder/default.rss", sourceName: "The Hindu Sport", scope: "INDIA" },
+          { url: "https://indianexpress.com/section/sports/feed/", sourceName: "Indian Express Sports", scope: "INDIA" },
+          { url: "https://feeds.feedburner.com/ndtvsports-latest", sourceName: "NDTV Sports", scope: "INDIA" },
+          { url: "https://feeds.bbci.co.uk/sport/rss.xml", sourceName: "BBC World Sport", scope: "MACRO_GLOBAL" },
+        ],
+        entertainment: [
+          { url: "https://www.thehindu.com/entertainment/feeder/default.rss", sourceName: "The Hindu Entertainment", scope: "INDIA" },
+          { url: "https://indianexpress.com/section/entertainment/feed/", sourceName: "Indian Express Entertainment", scope: "INDIA" },
+          { url: "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml", sourceName: "BBC Global Arts", scope: "MACRO_GLOBAL" },
+        ],
       };
 
       function stripHtml(html = "") {
@@ -491,9 +521,8 @@
       }
 
       class LiveStreamService {
-        async fetchLiveCategoryStream(category = "general", country = "us") {
+        async fetchLiveCategoryStream(category = "general", country = "in") {
           const feeds = [...(LIVE_RSS_FEEDS[category] || LIVE_RSS_FEEDS.general)];
-          if (country === "in" && category === "general") feeds.reverse();
           try {
             const requests = feeds.map(async (feed) => {
               const res = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.url)}`);
@@ -510,10 +539,11 @@
                   title: stripHtml(item.title || "Breaking Live Update"),
                   description: stripHtml(item.description || ""),
                   content: stripHtml(item.content || item.description || ""),
-                  url: item.link || "https://www.bbc.com/news",
+                  url: item.link || "https://www.thehindu.com",
                   urlToImage: rawImg ? rawImg.replace("/standard/240/", "/standard/976/") : CATEGORY_FALLBACK_IMAGES[category],
                   publishedAt: pubIso,
                   category,
+                  scope: feed.scope || "INDIA",
                   isRealtimeStream: true,
                 };
               });
@@ -698,7 +728,7 @@
                 }
               };
 
-              // Stream 0: Local <2ms RAM Edge Cache Server (/api/fast-news)
+              // Stream 0: Local <2ms RAM Edge Cache Server (/api/fast-news or http://127.0.0.1:5173/api/fast-news)
               const edgeParams = new URLSearchParams({
                 category,
                 country,
@@ -707,10 +737,17 @@
                 to: toDate,
                 force: forceRefresh ? "1" : "0",
               });
-              const edgeItems = await fetch(`/api/fast-news?${edgeParams.toString()}`)
+              let edgeItems = await fetch(`/api/fast-news?${edgeParams.toString()}`)
                 .then((r) => (r.ok ? r.json() : null))
                 .then((d) => (d?.status === "ok" && Array.isArray(d.articles) ? d.articles : []))
                 .catch(() => []);
+
+              if (edgeItems.length === 0 && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+                edgeItems = await fetch(`http://127.0.0.1:5173/api/fast-news?${edgeParams.toString()}`)
+                  .then((r) => (r.ok ? r.json() : null))
+                  .then((d) => (d?.status === "ok" && Array.isArray(d.articles) ? d.articles : []))
+                  .catch(() => []);
+              }
 
               if (edgeItems.length > 0) {
                 emitBatch(edgeItems);
@@ -1470,9 +1507,15 @@
 
           const pollId = setInterval(async () => {
             try {
-              const d = await fetch(`/api/fast-news?${params.toString()}&force=0`).then((r) => (r.ok ? r.json() : null));
+              let d = await fetch(`/api/fast-news?${params.toString()}&force=0`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+              if (!d && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+                d = await fetch(`http://127.0.0.1:5173/api/fast-news?${params.toString()}&force=0`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+              }
               if (d?.status === "ok" && Array.isArray(d.articles)) {
                 applyIncoming(d.articles);
+              } else {
+                const rssItems = await liveStreamService.fetchLiveCategoryStream(category, country);
+                if (rssItems.length > 0) applyIncoming(rssItems);
               }
             } catch {}
           }, 10000);
