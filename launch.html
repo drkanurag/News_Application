@@ -23,8 +23,455 @@
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
-    <link rel="stylesheet" href="./src/index.css" />
-    <link rel="stylesheet" href="./src/App.css" />
+    <style>
+      :root,
+      [data-theme="dark"] {
+        --nm-bg: #0b0f17;
+        --nm-surface: #131b2e;
+        --nm-surface-elevated: #1a243b;
+        --nm-header-bg: rgba(11, 15, 23, 0.96);
+        --nm-border: rgba(255, 255, 255, 0.09);
+        --nm-text: #f1f5f9;
+        --nm-text-muted: #94a3b8;
+        --nm-accent: #ef4444;
+        --nm-accent-hover: #dc2626;
+        --nm-card-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.55);
+        --nm-skeleton-base: #1e293b;
+        --nm-skeleton-shine: #334155;
+      }
+
+      [data-theme="light"] {
+        --nm-bg: #f8fafc;
+        --nm-surface: #ffffff;
+        --nm-surface-elevated: #f1f5f9;
+        --nm-header-bg: rgba(255, 255, 255, 0.96);
+        --nm-border: rgba(15, 23, 42, 0.1);
+        --nm-text: #0f172a;
+        --nm-text-muted: #64748b;
+        --nm-accent: #e11d48;
+        --nm-accent-hover: #be123c;
+        --nm-card-shadow: 0 10px 25px -8px rgba(15, 23, 42, 0.08);
+        --nm-skeleton-base: #e2e8f0;
+        --nm-skeleton-shine: #f1f5f9;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background-color: var(--nm-bg);
+        color: var(--nm-text);
+        -webkit-font-smoothing: antialiased;
+        transition: background-color 0.25s ease, color 0.25s ease;
+      }
+
+      .app-shell {
+        background-color: var(--nm-bg);
+        color: var(--nm-text);
+      }
+
+      .news-header {
+        background-color: var(--nm-header-bg);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--nm-border);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+        z-index: 1040;
+      }
+
+      [data-theme="light"] .news-header {
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+      }
+
+      .news-topbar {
+        background-color: rgba(0, 0, 0, 0.25);
+        border-color: var(--nm-border) !important;
+      }
+
+      [data-theme="light"] .news-topbar {
+        background-color: rgba(15, 23, 42, 0.04);
+      }
+
+      .live-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: #ef4444;
+        display: inline-block;
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+        animation: pulseDot 1.8s infinite;
+      }
+
+      @keyframes pulseDot {
+        0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+        70% { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+      }
+
+      .edition-select,
+      .sort-select {
+        width: auto !important;
+        min-width: 165px;
+        max-width: 235px;
+        background-color: var(--nm-surface);
+        color: var(--nm-text);
+        border-color: var(--nm-border);
+        font-size: 0.8rem;
+        cursor: pointer;
+      }
+
+      .news-topbar .btn,
+      .date-filter-bar .btn {
+        white-space: nowrap;
+      }
+
+      .brand-mark {
+        width: 40px;
+        height: 40px;
+        border-radius: 11px;
+        background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.35);
+        flex-shrink: 0;
+      }
+
+      .brand-title {
+        font-family: "Playfair Display", Georgia, serif;
+        font-weight: 800;
+        font-size: 1.45rem;
+        line-height: 1.05;
+        letter-spacing: -0.02em;
+        color: var(--nm-text);
+      }
+
+      .brand-subtitle {
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        color: var(--nm-text-muted);
+      }
+
+      .category-pill {
+        border-radius: 999px;
+        padding: 0.4rem 0.88rem !important;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--nm-text-muted) !important;
+        border: 1px solid transparent;
+        background: transparent;
+        transition: all 0.2s ease;
+        white-space: nowrap;
+      }
+
+      .category-pill:hover {
+        color: var(--nm-text) !important;
+        background-color: var(--nm-surface-elevated);
+      }
+
+      .category-pill.active {
+        color: #ffffff !important;
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        font-weight: 600;
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+      }
+
+      .news-search-group {
+        min-width: 240px;
+        max-width: 280px;
+        background-color: var(--nm-surface);
+        border-radius: 999px;
+        overflow: hidden;
+        border: 1px solid var(--nm-border);
+      }
+
+      .news-search-group:focus-within {
+        border-color: #ef4444;
+        box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+      }
+
+      .news-search-group .form-control,
+      .news-search-group .input-group-text {
+        border: none;
+        background: transparent;
+        color: var(--nm-text);
+        box-shadow: none !important;
+      }
+
+      .section-icon-badge {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.05rem;
+        flex-shrink: 0;
+      }
+
+      .news-card {
+        background-color: var(--nm-surface);
+        border: 1px solid var(--nm-border);
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: var(--nm-card-shadow);
+        transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+      }
+
+      .news-card:hover {
+        transform: translateY(-5px);
+        border-color: rgba(239, 68, 68, 0.4);
+      }
+
+      .news-card-media {
+        position: relative;
+        width: 100%;
+        height: 205px;
+        min-height: 205px;
+        max-height: 205px;
+        overflow: hidden;
+        cursor: pointer;
+        background-color: var(--nm-surface-elevated);
+        flex-shrink: 0;
+      }
+
+      .news-card-img {
+        width: 100% !important;
+        height: 205px !important;
+        object-fit: cover !important;
+        display: block;
+        transition: transform 0.45s ease;
+      }
+
+      .news-card:hover .news-card-img {
+        transform: scale(1.05);
+      }
+
+      .news-card-media-gradient {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to top, rgba(11, 15, 23, 0.65) 0%, rgba(11, 15, 23, 0) 55%);
+        pointer-events: none;
+      }
+
+      .news-source-pill {
+        position: absolute;
+        bottom: 12px;
+        left: 12px;
+        background: rgba(15, 23, 42, 0.88);
+        backdrop-filter: blur(6px);
+        color: #f8fafc;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 0.25rem 0.65rem;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        max-width: 75%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .news-bookmark-floating {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(15, 23, 42, 0.78);
+        backdrop-filter: blur(6px);
+        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .news-bookmark-floating:hover {
+        transform: scale(1.08);
+        background: rgba(239, 68, 68, 0.9);
+      }
+
+      .news-bookmark-floating.bookmarked {
+        background: #f59e0b;
+        color: #111827;
+        border-color: #f59e0b;
+      }
+
+      .news-card-title {
+        font-weight: 700;
+        font-size: 1.03rem;
+        line-height: 1.42;
+        color: var(--nm-text);
+        cursor: pointer;
+        transition: color 0.18s ease;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        min-height: 2.84em;
+      }
+
+      .news-card-title:hover {
+        color: #ef4444;
+      }
+
+      .news-card-desc {
+        font-size: 0.88rem;
+        line-height: 1.56;
+        color: var(--nm-text-muted);
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .news-card-footer {
+        border-color: var(--nm-border) !important;
+      }
+
+      .article-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(4, 7, 14, 0.82);
+        backdrop-filter: blur(8px);
+        z-index: 1080;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+      }
+
+      .article-modal-card {
+        width: 100%;
+        max-width: 720px;
+        max-height: 90vh;
+        overflow-y: auto;
+        background-color: var(--nm-surface);
+        color: var(--nm-text);
+        border: 1px solid var(--nm-border);
+        border-radius: 20px;
+        box-shadow: 0 25px 60px rgba(0, 0, 0, 0.65);
+      }
+
+      .article-modal-media {
+        position: relative;
+        height: 280px;
+        overflow: hidden;
+        background-color: var(--nm-surface-elevated);
+      }
+
+      .article-modal-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .article-modal-media-overlay {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to top, rgba(11, 15, 23, 0.85) 0%, rgba(11, 15, 23, 0.1) 60%);
+      }
+
+      .article-modal-close {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(15, 23, 42, 0.78);
+        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+
+      .article-modal-badges {
+        position: absolute;
+        bottom: 16px;
+        left: 20px;
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      .article-modal-body {
+        padding: 1.5rem 1.75rem;
+      }
+
+      .article-modal-title {
+        font-family: "Playfair Display", Georgia, serif;
+        font-weight: 800;
+        font-size: 1.45rem;
+        line-height: 1.32;
+      }
+
+      .article-modal-lead {
+        font-size: 1.01rem;
+        line-height: 1.65;
+        color: var(--nm-text);
+        font-weight: 500;
+      }
+
+      .article-modal-content-box {
+        background-color: var(--nm-surface-elevated);
+        border-left: 4px solid #ef4444;
+        padding: 1rem 1.25rem;
+        border-radius: 0 12px 12px 0;
+        font-size: 0.94rem;
+        line-height: 1.68;
+        color: var(--nm-text-muted);
+      }
+
+      .date-filter-bar,
+      .subject-explorer-section {
+        background-color: var(--nm-surface);
+        border-color: var(--nm-border) !important;
+      }
+
+      .subject-desk-card {
+        background-color: var(--nm-surface-elevated);
+        border: 1px solid var(--nm-border);
+        color: var(--nm-text);
+        cursor: pointer;
+        transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .subject-desk-card:hover {
+        transform: translateY(-3px);
+        border-color: rgba(239, 68, 68, 0.45);
+      }
+
+      .subject-desk-card.active {
+        border-color: #ef4444;
+        box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+      }
+
+      .subject-desk-icon {
+        font-size: 1.25rem;
+      }
+
+      .subject-desk-desc {
+        font-size: 0.74rem;
+        line-height: 1.35;
+      }
+    </style>
     <script
       crossorigin
       src="https://unpkg.com/react@18/umd/react.production.min.js"
@@ -1557,64 +2004,75 @@
               <div className="news-topbar py-1 px-3 border-bottom">
                 <div className="container-xl d-flex flex-wrap align-items-center justify-content-between gap-2">
                   <div className="d-flex align-items-center gap-3 small">
-                    <span className="d-inline-flex align-items-center gap-1 fw-medium text-danger">
+                    <span className="d-inline-flex align-items-center gap-1 fw-medium text-danger text-nowrap">
                       <span className="live-dot"></span> 🇮🇳 INDIA PRIMARY + 🌐 MACRO GLOBAL STREAM
                     </span>
-                    <span className="text-secondary d-none d-md-inline">
+                    <span className="text-secondary d-none d-lg-inline text-nowrap">
                       Auto-Stream {autoSync ? "ACTIVE (Every 8s)" : "PAUSED"} • Last Sync: {lastSyncTime}
                     </span>
                   </div>
-                  <div className="d-flex align-items-center gap-2">
+                  <div className="d-flex flex-wrap align-items-center gap-2">
                     <button
                       type="button"
-                      className={`btn btn-sm ${autoSync ? "btn-outline-success" : "btn-outline-secondary"}`}
+                      className={`btn btn-sm text-nowrap flex-shrink-0 ${autoSync ? "btn-outline-success" : "btn-outline-secondary"}`}
                       onClick={() => setAutoSync(!autoSync)}
                     >
                       <i className="bi bi-broadcast me-1"></i>
                       {autoSync ? "Live Stream: ON" : "Live Stream: OFF"}
                     </button>
-                    <select className="form-select form-select-sm edition-select" value={country} onChange={(e) => setCountry(e.target.value)}>
+                    <select
+                      className="form-select form-select-sm edition-select w-auto flex-shrink-0"
+                      style={{ width: "auto", minWidth: "175px" }}
+                      value={country}
+                      onChange={(e) => setCountry(e.target.value)}
+                    >
                       {COUNTRIES.map((c) => (
                         <option key={c.code} value={c.code}>{c.flag} {c.label}</option>
                       ))}
                     </select>
-                    <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setActiveView(activeView === "bookmarks" ? "feed" : "bookmarks")}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary text-nowrap flex-shrink-0"
+                      onClick={() => setActiveView(activeView === "bookmarks" ? "feed" : "bookmarks")}
+                    >
                       <i className="bi bi-bookmark me-1"></i> Saved ({bookmarks.length})
                     </button>
-                    <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary flex-shrink-0"
+                      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                    >
                       <i className={`bi ${theme === "dark" ? "bi-sun-fill text-warning" : "bi-moon-stars-fill"}`}></i>
                     </button>
                   </div>
                 </div>
               </div>
-              <nav className="navbar navbar-expand-lg py-2 px-3">
-                <div className="container-xl">
-                  <a className="navbar-brand d-flex align-items-center gap-2 me-4" href="#top">
+              <nav className="navbar py-2 px-3">
+                <div className="container-xl d-flex flex-wrap align-items-center justify-content-between gap-3">
+                  <a className="navbar-brand d-flex align-items-center gap-2 me-2 mb-0" href="#top">
                     <span className="brand-mark"><i className="bi bi-lightning-charge-fill"></i></span>
                     <div className="d-flex flex-column">
                       <span className="brand-title">News<span className="text-danger">Mag</span></span>
                       <span className="brand-subtitle">INDIA &amp; MACRO BRIEFING</span>
                     </div>
                   </a>
-                  <div className="collapse navbar-collapse show">
-                    <ul className="navbar-nav me-auto mb-2 mb-lg-0 gap-1 flex-row flex-wrap">
-                      {CATEGORIES.map((cat) => (
-                        <li className="nav-item" key={cat.id}>
-                          <button
-                            type="button"
-                            className={`nav-link category-pill ${category === cat.id ? "active" : ""}`}
-                            onMouseEnter={() => newsFeedService.prefetchOnHover({ category: cat.id, country })}
-                            onClick={() => setCategory(cat.id)}
-                          >
-                            <i className={`bi ${cat.icon} me-1`}></i>{cat.label}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="input-group input-group-sm news-search-group" style={{ maxWidth: "280px" }}>
-                      <span className="input-group-text bg-transparent border-end-0"><i className="bi bi-search text-secondary"></i></span>
-                      <input type="search" className="form-control border-start-0 ps-0" placeholder="Search India & macro news..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-                    </div>
+                  <ul className="navbar-nav d-flex flex-row flex-wrap align-items-center gap-1 mb-0 me-auto">
+                    {CATEGORIES.map((cat) => (
+                      <li className="nav-item" key={cat.id}>
+                        <button
+                          type="button"
+                          className={`nav-link category-pill ${category === cat.id ? "active" : ""}`}
+                          onMouseEnter={() => newsFeedService.prefetchOnHover({ category: cat.id, country })}
+                          onClick={() => setCategory(cat.id)}
+                        >
+                          <i className={`bi ${cat.icon} me-1`}></i>{cat.label}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="input-group input-group-sm news-search-group" style={{ maxWidth: "270px" }}>
+                    <span className="input-group-text bg-transparent border-end-0"><i className="bi bi-search text-secondary"></i></span>
+                    <input type="search" className="form-control border-start-0 ps-0" placeholder="Search India & macro news..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                   </div>
                 </div>
               </nav>
