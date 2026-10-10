@@ -1,6 +1,6 @@
 # 🇮🇳 NewsMag — Fault-Isolated Microservice Real-Time News & Macro Intelligence Platform
 
-[![Open Live Working Website Online](https://img.shields.io/badge/%F0%9F%9A%80_CLICK_HERE_TO_OPEN_LIVE_WEBSITE-Works_Directly_in_Browser-ef4444?style=for-the-badge)](https://raw.githack.com/drkanurag/News_Application/main/index.html)
+[![Open Live Working Website Online](https://img.shields.io/badge/%F0%9F%9A%80_CLICK_HERE_TO_OPEN_LIVE_WEBSITE-Works_Directly_in_Browser-ef4444?style=for-the-badge)](https://raw.githack.com/drkanurag/News_Application/main/launch.html)
 [![Open Live Mirror](https://img.shields.io/badge/%F0%9F%8C%90_OPEN_LIVE_MIRROR-HTMLPreview_CDN-0ea5e9?style=for-the-badge)](https://htmlpreview.github.io/?https://github.com/drkanurag/News_Application/blob/main/index.html)
 [![GitHub Pages](https://img.shields.io/badge/%F0%9F%93%A1_GITHUB_PAGES-drkanurag.github.io-8b5cf6?style=for-the-badge)](https://drkanurag.github.io/News_Application/)
 [![Local Edge Server](https://img.shields.io/badge/%E2%9A%A1_LOCAL_EDGE_SERVER-localhost:5173-10b981?style=for-the-badge)](http://localhost:5173/launch.html)
@@ -13,7 +13,7 @@
 
 | Environment | Direct Clickable Link | Mode & Capabilities |
 | :--- | :--- | :--- |
-| 🌍 **1. Live Cloud Website (Primary CDN)** | **[🚀 Click Here to Open Live Website (`raw.githack.com`)](https://raw.githack.com/drkanurag/News_Application/main/index.html)** | **Works instantly on any device/browser** directly from GitHub with zero setup. Streams live Indian & Macro Global RSS wires in real time. |
+| 🌍 **1. Live Cloud Website (Primary CDN)** | **[🚀 Click Here to Open Live Website (`raw.githack.com`)](https://raw.githack.com/drkanurag/News_Application/main/launch.html)** | **Works instantly on any device/browser** directly from GitHub with zero setup. Streams live Indian & Macro Global RSS wires in real time. |
 | 🌐 **2. Live Cloud Mirror (`HTMLPreview`)** | **[⚡ Click Here to Open Live Mirror (`htmlpreview.github.io`)](https://htmlpreview.github.io/?https://github.com/drkanurag/News_Application/blob/main/index.html)** | Secondary cloud mirror rendering [`index.html`](../index.html) directly in the browser. |
 | 📡 **3. GitHub Pages Deployment** | **[🇮🇳 Open GitHub Pages (`drkanurag.github.io/News_Application`)](https://drkanurag.github.io/News_Application/)** | Automated CI/CD deployment via [`.github/workflows/deploy-pages.yml`](../.github/workflows/deploy-pages.yml). |
 | 💻 **4. Local Sub-2ms Edge Server** | **[🖥️ Open Local Edge App (`http://localhost:5173/launch.html`)](http://localhost:5173/launch.html)** | Connects to local [`fast_server.py`](./fast_server.py) for `< 2ms` RAM-cached feeds + `8s` Server-Sent Events (`/api/live-stream`). |
