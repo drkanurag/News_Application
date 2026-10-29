@@ -192,7 +192,11 @@ npm run dev
 
 ### Option 4: Run Automated Unit Tests (CI Gate)
 ```bash
-cd news
 npm test
 ```
 All 9 unit tests run and verify security sanitization, circuit breaker state transitions, and search/sort operations.
+
+### Option 5: Deploy to Vercel (1-Click Deployment)
+1. Import repository `drkanurag/News_Application` into [Vercel](https://vercel.com).
+2. The project includes [`vercel.json`](./vercel.json) and root [`package.json`](./package.json) configured out-of-the-box.
+3. Vercel automatically runs the Vite build and serves `news/dist` with SPA routing and content-type safe fallbacks. No manual override needed!

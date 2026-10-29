@@ -296,7 +296,10 @@ class LiveStreamService {
         const edgeRes = await fetch(
           `/api/fast-news?${params.toString()}&force=0`
         )
-          .then((r) => (r.ok ? r.json() : null))
+          .then((r) => {
+            const ct = r.headers.get("content-type") || "";
+            return r.ok && ct.includes("json") ? r.json() : null;
+          })
           .catch(() => null);
 
         if (

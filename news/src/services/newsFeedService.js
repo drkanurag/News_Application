@@ -408,7 +408,10 @@ class NewsFeedService {
           force: forceRefresh ? "1" : "0",
         });
         const edgeItems = await fetch(`/api/fast-news?${edgeParams.toString()}`)
-          .then((r) => (r.ok ? r.json() : null))
+          .then((r) => {
+            const ct = r.headers.get("content-type") || "";
+            return r.ok && ct.includes("json") ? r.json() : null;
+          })
           .then((d) =>
             d?.status === "ok" && Array.isArray(d.articles) ? d.articles : []
           )
