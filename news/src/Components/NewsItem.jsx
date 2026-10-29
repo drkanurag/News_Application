@@ -4,6 +4,7 @@ import {
   estimateReadingTime,
   formatExactDateTime,
   formatRelativeTime,
+  safeUrl,
 } from "./fallbackData";
 import { intelligenceService } from "../services/intelligenceService";
 import { audioBriefingService } from "../services/audioBriefingService";
@@ -215,7 +216,7 @@ const NewsItem = ({
                 </button>
               )}
               <a
-                href={item.url}
+                href={safeUrl(item.url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn btn-sm btn-danger d-inline-flex align-items-center gap-1"
@@ -242,14 +243,14 @@ const NewsItem = ({
         }}
       >
         <img
-          src={imgSrc}
+          src={safeUrl(imgSrc)}
           className="news-card-img"
           alt={safeTitle}
           loading="lazy"
           decoding="async"
           onError={() => setImgSrc(fallbackImg)}
         />
-        <div className="news-card-media-gradient" />
+        <div className="news-card-media-gradient"></div>
         <span className="news-source-pill">
           {item.isRealtimeStream && (
             <span
@@ -385,7 +386,7 @@ const NewsItem = ({
             )}
           </div>
           <a
-            href={item.url}
+            href={safeUrl(item.url)}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-sm btn-danger d-inline-flex align-items-center gap-1 ms-auto fw-medium"

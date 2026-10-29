@@ -243,25 +243,32 @@ class LiveStreamService {
           try {
             const payload = JSON.parse(event.data);
             if (
-              payload?.status === "ok" &&
+              payload &&
+              typeof payload === "object" &&
+              payload.status === "ok" &&
               Array.isArray(payload.articles) &&
               payload.articles.length > 0
             ) {
+              const validArticles = payload.articles.filter(
+                (a) => a && typeof a === "object" && typeof a.title === "string"
+              );
+              if (validArticles.length === 0) return;
+
               healthMonitorService.reportStatus("realtime-stream-service", {
                 name: "Real-Time Live Stream Service",
                 domain: "Live Breaking Wire (SSE Push)",
                 status: "HEALTHY",
-                message: `Live SSE stream active • ${payload.articles.length} global stories synced`,
+                message: `Live SSE stream active • ${validArticles.length} global stories synced`,
               });
               if (onRealtimeArticles) {
-                onRealtimeArticles(payload.articles, {
+                onRealtimeArticles(validArticles, {
                   source: "sse",
                   lastSyncedAt:
                     payload.lastSyncedAt || new Date().toISOString(),
                 });
               }
               eventBus.emit(EVENTS.REALTIME_PUSH_RECEIVED, {
-                count: payload.articles.length,
+                count: validArticles.length,
                 timestamp: new Date().toISOString(),
               });
             }

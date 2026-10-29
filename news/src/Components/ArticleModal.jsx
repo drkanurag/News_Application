@@ -4,6 +4,7 @@ import {
   cleanArticleContent,
   estimateReadingTime,
   formatRelativeTime,
+  safeUrl,
 } from "./fallbackData";
 import { intelligenceService } from "../services/intelligenceService";
 import { audioBriefingService } from "../services/audioBriefingService";
@@ -127,7 +128,7 @@ const ArticleModal = ({
       >
         <div className="article-modal-media">
           <img
-            src={imgSrc}
+            src={safeUrl(imgSrc)}
             alt={article.title || "Article cover"}
             className="article-modal-img"
             onError={() =>
@@ -369,7 +370,7 @@ const ArticleModal = ({
             </div>
 
             <a
-              href={article.url}
+              href={safeUrl(article.url)}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-danger d-inline-flex align-items-center gap-2 px-4 fw-semibold"

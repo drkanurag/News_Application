@@ -365,7 +365,6 @@ class NewsFeedService {
     const catMeta = CATEGORIES.find((c) => c.id === category) || CATEGORIES[0];
     const countryMeta =
       COUNTRIES.find((c) => c.code === country) || COUNTRIES[0];
-    const apiKey = import.meta.env.VITE_API_KEY;
 
     if (forceRefresh) {
       this.circuitBreaker.reset();
@@ -399,7 +398,7 @@ class NewsFeedService {
           }
         };
 
-        // Stream 0: Local <2ms RAM Edge Cache Server (/api/fast-news)
+        // Stream 0: Local Edge Cache Server (/api/fast-news)
         const edgeParams = new URLSearchParams({
           category,
           country,
@@ -418,73 +417,14 @@ class NewsFeedService {
         if (edgeItems.length > 0) {
           emitIncremental(edgeItems);
         } else {
-          // Stream 1: Live Real-Time Publisher Wire
-          const liveWirePromise = liveStreamService
+          // Stream 1: Live Real-Time Publisher Wire (RSS via CORS gateway)
+          const liveWireItems = await liveStreamService
             .fetchLiveCategoryStream(category, country)
-            .then((items) => {
-              emitIncremental(items);
-              return items;
-            })
             .catch(() => []);
 
-          // Stream 2: NewsAPI /v2/top-headlines (25 items for fast payload)
-          const topHeadlinesPromise = apiKey
-            ? fetch(
-                `https://newsapi.org/v2/top-headlines?country=${country}&category=${category}&pageSize=25&apiKey=${apiKey}`
-              )
-                .then((r) => r.json())
-                .then((d) => {
-                  const items =
-                    d.status === "ok" && Array.isArray(d.articles)
-                      ? d.articles
-                      : [];
-                  emitIncremental(items);
-                  return items;
-                })
-                .catch(() => [])
-            : Promise.resolve([]);
-
-          // Stream 3: NewsAPI /v2/everything (30 items for fast transfer)
-          const baseTopic =
-            CATEGORY_QUERY_TERMS[category] || CATEGORY_QUERY_TERMS.general;
-          const countryTerm = COUNTRY_QUERY_TERMS[country] || "";
-          const combinedQuery = remoteSearchQuery.trim()
-            ? `${remoteSearchQuery.trim()} AND (${baseTopic})`
-            : country === "us"
-            ? `(${baseTopic})`
-            : `(${baseTopic}) AND (${countryTerm})`;
-
-          const everythingParams = new URLSearchParams({
-            q: combinedQuery,
-            sortBy: "publishedAt",
-            language: "en",
-            pageSize: "30",
-            apiKey: apiKey || "",
-          });
-          if (fromDate) everythingParams.set("from", fromDate);
-          if (toDate) everythingParams.set("to", toDate);
-
-          const everythingPromise = apiKey
-            ? fetch(
-                `https://newsapi.org/v2/everything?${everythingParams.toString()}`
-              )
-                .then((r) => r.json())
-                .then((d) => {
-                  const items =
-                    d.status === "ok" && Array.isArray(d.articles)
-                      ? d.articles
-                      : [];
-                  emitIncremental(items);
-                  return items;
-                })
-                .catch(() => [])
-            : Promise.resolve([]);
-
-          await Promise.allSettled([
-            liveWirePromise,
-            topHeadlinesPromise,
-            everythingPromise,
-          ]);
+          if (liveWireItems && liveWireItems.length > 0) {
+            emitIncremental(liveWireItems);
+          }
         }
 
         const finalArticles = this.deduplicateAndSort(accumulatedRaw, category);

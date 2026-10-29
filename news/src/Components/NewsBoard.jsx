@@ -18,6 +18,7 @@ import {
   formatExactDateTime,
   formatRelativeTime,
   getLocalDateKey,
+  safeUrl,
 } from "./fallbackData";
 
 const PAGE_SIZE = 12;
@@ -931,7 +932,7 @@ const NewsBoard = ({
                     src={
                       heroImgError || !heroArticle.urlToImage
                         ? heroFallbackImg
-                        : heroArticle.urlToImage
+                        : safeUrl(heroArticle.urlToImage)
                     }
                     alt={heroArticle.title}
                     className="hero-media-img"
@@ -990,7 +991,7 @@ const NewsBoard = ({
                   </button>
 
                   <a
-                    href={heroArticle.url}
+                    href={safeUrl(heroArticle.url)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="btn btn-outline-secondary d-inline-flex align-items-center gap-1"

@@ -78,25 +78,26 @@
       }
 
       .news-header {
-        background-color: var(--nm-header-bg);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
+        background-color: #0b0f17 !important;
         border-bottom: 1px solid var(--nm-border);
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
         z-index: 1040;
+        position: sticky;
+        top: 0;
       }
 
       [data-theme="light"] .news-header {
+        background-color: #ffffff !important;
         box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
       }
 
       .news-topbar {
-        background-color: rgba(0, 0, 0, 0.25);
+        background-color: #131b2e;
         border-color: var(--nm-border) !important;
       }
 
       [data-theme="light"] .news-topbar {
-        background-color: rgba(15, 23, 42, 0.04);
+        background-color: #f1f5f9;
       }
 
       .live-dot {
@@ -488,8 +489,8 @@
     <script type="text/babel">
       const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
-      // Environment API Key from .env
-      const VITE_API_KEY = "ad82c248f29e4a71a9a4dbde90cd007a";
+      // Environment API Key is managed server-side only in fast_server.py
+      const VITE_API_KEY = "";
 
       // ============================================================================
       // 1. CORE ISOLATION LAYER: IsolatedEventBus, CircuitBreaker, ServiceErrorBoundary
@@ -608,21 +609,27 @@
               circuitState: this.state,
             });
           }
+          let timer;
+          const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error(`Timeout after ${this.timeoutMs}ms`)),
+              this.timeoutMs
+            );
+          });
           try {
-            const result = await Promise.race([
-              actionFn(),
-              new Promise((_, reject) =>
-                setTimeout(
-                  () => reject(new Error(`Timeout after ${this.timeoutMs}ms`)),
-                  this.timeoutMs
-                )
-              ),
-            ]);
+            const result = await Promise.race([actionFn(), timeoutPromise]);
             this.recordSuccess();
             return result;
           } catch (error) {
             this.recordFailure(error?.message || "Service error");
             return fallbackFn({
+              reason: error?.message || "Service error",
+              circuitState: this.state,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
+        }
               reason: error?.message || "Service error",
               circuitState: this.state,
             });
@@ -726,6 +733,16 @@
         sports: "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?auto=format&fit=crop&w=1000&q=80",
         entertainment: "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1000&q=80",
       };
+
+      function safeUrl(u) {
+        if (!u || typeof u !== "string") return "#";
+        try {
+          const p = new URL(u.trim());
+          return (p.protocol === "https:" || p.protocol === "http:") ? p.href : "#";
+        } catch {
+          return "#";
+        }
+      }
 
       function formatRelativeTime(dateString) {
         if (!dateString) return "Just now";
@@ -1207,47 +1224,7 @@
                   })
                   .catch(() => []);
 
-                const topHeadlinesPromise = fetch(`https://newsapi.org/v2/top-headlines?country=${country}&category=${category}&pageSize=25&apiKey=${VITE_API_KEY}`)
-                  .then((r) => r.json())
-                  .then((d) => {
-                    const items = d.status === "ok" && Array.isArray(d.articles) ? d.articles : [];
-                    emitBatch(items);
-                    return items;
-                  })
-                  .catch(() => []);
-
-                const baseTopic = CATEGORY_QUERY_TERMS[category] || CATEGORY_QUERY_TERMS.general;
-                const countryTerm = COUNTRY_QUERY_TERMS[country] || "";
-                const combinedQuery = remoteSearchQuery.trim()
-                  ? `${remoteSearchQuery.trim()} AND (${baseTopic})`
-                  : country === "us"
-                  ? `(${baseTopic})`
-                  : `(${baseTopic}) AND (${countryTerm})`;
-
-                const params = new URLSearchParams({
-                  q: combinedQuery,
-                  sortBy: "publishedAt",
-                  language: "en",
-                  pageSize: "30",
-                  apiKey: VITE_API_KEY,
-                });
-                if (fromDate) params.set("from", fromDate);
-                if (toDate) params.set("to", toDate);
-
-                const everythingPromise = fetch(`https://newsapi.org/v2/everything?${params.toString()}`)
-                  .then((r) => r.json())
-                  .then((d) => {
-                    const items = d.status === "ok" && Array.isArray(d.articles) ? d.articles : [];
-                    emitBatch(items);
-                    return items;
-                  })
-                  .catch(() => []);
-
-                await Promise.allSettled([
-                  liveWirePromise,
-                  topHeadlinesPromise,
-                  everythingPromise,
-                ]);
+                await liveWirePromise;
               }
 
               const validArticles = this.deduplicateArticles(accumulated, category);
@@ -1753,8 +1730,8 @@
         return (
           <article className="news-card h-100 d-flex flex-column">
             <div className="news-card-media" onClick={() => onSelectArticle(article)} role="button">
-              <img src={imgSrc} className="news-card-img" alt={article.title} loading="lazy" onError={() => setImgSrc(fallbackImg)} />
-              <div className="news-card-media-gradient" />
+              <img src={safeUrl(imgSrc)} className="news-card-img" alt={article.title} loading="lazy" onError={() => setImgSrc(fallbackImg)} />
+              <div className="news-card-media-gradient"></div>
               <span className="news-source-pill">
                 {article.isRealtimeStream && <span className="live-dot me-1" style={{ width: "6px", height: "6px" }}></span>}
                 {article.scope === "INDIA" ? "🇮🇳 " : "🌐 "}
@@ -1818,7 +1795,7 @@
                     <i className={`bi ${isSpeaking ? "bi-stop-fill" : "bi-volume-up"}`}></i>
                   </button>
                 </div>
-                <a href={article.url} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-danger d-inline-flex align-items-center gap-1 ms-auto">
+                <a href={safeUrl(article.url)} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-danger d-inline-flex align-items-center gap-1 ms-auto">
                   Read More <i className="bi bi-arrow-up-right"></i>
                 </a>
               </div>
@@ -2284,11 +2261,11 @@
                 <div className="article-modal-card" onClick={(e) => e.stopPropagation()}>
                   <div className="article-modal-media">
                     <img
-                      src={selectedArticle.urlToImage || CATEGORY_FALLBACK_IMAGES[category]}
+                      src={safeUrl(selectedArticle.urlToImage || CATEGORY_FALLBACK_IMAGES[category])}
                       alt={selectedArticle.title}
                       className="article-modal-img"
                     />
-                    <div className="article-modal-media-overlay" />
+                    <div className="article-modal-media-overlay"></div>
                     <button type="button" className="article-modal-close" onClick={() => { audioBriefingService.stop(); setSelectedArticle(null); }}>
                       <i className="bi bi-x-lg"></i>
                     </button>
@@ -2393,7 +2370,7 @@
                           <i className="bi bi-twitter-x me-1"></i>Post
                         </a>
                       </div>
-                      <a href={selectedArticle.url} target="_blank" rel="noopener noreferrer" className="btn btn-danger px-4">
+                      <a href={safeUrl(selectedArticle.url)} target="_blank" rel="noopener noreferrer" className="btn btn-danger px-4">
                         Read Full Story at Source <i className="bi bi-box-arrow-up-right ms-1"></i>
                       </a>
                     </div>

@@ -15,7 +15,16 @@ const SubjectExplorer = ({
   const [customSubjects, setCustomSubjects] = useState(() => {
     try {
       const saved = localStorage.getItem(CUSTOM_SUBJECTS_KEY);
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(
+        (s) =>
+          s &&
+          typeof s === "object" &&
+          typeof s.id === "string" &&
+          typeof s.label === "string"
+      );
     } catch {
       return [];
     }

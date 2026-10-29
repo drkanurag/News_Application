@@ -5,22 +5,24 @@
 }
 
 .news-header {
-  background-color: rgba(11, 15, 23, 0.96);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background-color: #0b0f17 !important;
   border-bottom: 1px solid var(--nm-border);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
   z-index: 1040;
 }
 
 [data-theme="light"] .news-header {
-  background-color: rgba(255, 255, 255, 0.96);
+  background-color: #ffffff !important;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
 }
 
 .news-topbar {
-  background-color: rgba(0, 0, 0, 0.25);
+  background-color: #131b2e;
   border-color: var(--nm-border) !important;
+}
+
+[data-theme="light"] .news-topbar {
+  background-color: #f1f5f9;
 }
 
 [data-theme="light"] .news-topbar {

@@ -73,16 +73,16 @@ export class CircuitBreaker {
       });
     }
 
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Timeout after ${this.timeoutMs}ms`)),
+        this.timeoutMs
+      );
+    });
+
     try {
-      const result = await Promise.race([
-        actionFn(),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`Timeout after ${this.timeoutMs}ms`)),
-            this.timeoutMs
-          )
-        ),
-      ]);
+      const result = await Promise.race([actionFn(), timeout]);
       this.recordSuccess();
       return result;
     } catch (error) {
@@ -91,6 +91,8 @@ export class CircuitBreaker {
         reason: error?.message || "Service error",
         circuitState: this.state,
       });
+    } finally {
+      clearTimeout(timer);
     }
   }
 }

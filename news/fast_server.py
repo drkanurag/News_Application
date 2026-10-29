@@ -7,19 +7,28 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = 5173
-API_KEY = "ad82c248f29e4a71a9a4dbde90cd007a"
+API_KEY = os.environ.get("NEWSAPI_KEY", "")
 
-if os.path.exists(".env"):
-    with open(".env", "r", encoding="utf-8") as f:
-        for line in f:
-            if "VITE_API_KEY" in line and "=" in line:
-                API_KEY = line.split("=", 1)[1].strip()
+env_file = os.path.join(BASE_DIR, ".env")
+if not API_KEY and os.path.exists(env_file):
+    try:
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if (line.startswith("NEWSAPI_KEY") or line.startswith("VITE_API_KEY")) and "=" in line:
+                    API_KEY = line.split("=", 1)[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
 
 CATEGORIES = [
     "general",
@@ -182,10 +191,15 @@ CATEGORY_IMAGE_POOLS = {
 }
 
 RAM_CACHE = {}
-ACTIVE_KEYS = set([("in", "general", ""), ("in", "business", ""), ("in", "technology", "")])
-SEEN_TITLES = set()
+ACTIVE_KEYS = {("in", "general", ""): time.time(), ("in", "business", ""): time.time(), ("in", "technology", ""): time.time()}
 CACHE_LOCK = threading.Lock()
 EXECUTOR = ThreadPoolExecutor(max_workers=16)
+
+def is_safe_url(u):
+    if not isinstance(u, str):
+        return False
+    u_lower = u.strip().lower()
+    return u_lower.startswith("http://") or u_lower.startswith("https://")
 
 
 def pick_category_image(title, category="general"):
@@ -245,7 +259,7 @@ def fetch_direct_xml_rss(rss_url, default_source_name, category="general", scope
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NewsMag-IndiaMacroEngine/4.0"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            xml_bytes = resp.read()
+            xml_bytes = resp.read(2_000_000)
         root = ET.fromstring(xml_bytes)
         items = root.findall(".//item")
         results = []
@@ -280,7 +294,9 @@ def fetch_direct_xml_rss(rss_url, default_source_name, category="general", scope
                 if FOREIGN_LOCAL_NOISE.search(f"{title} {desc}"):
                     continue
 
-            link = (item.findtext("link") or "").strip() or "https://www.thehindu.com"
+            link = (item.findtext("link") or "").strip()
+            if not is_safe_url(link):
+                link = "https://www.thehindu.com"
             pub_iso = parse_pubdate_to_iso(item.findtext("pubDate"))
 
             thumb_url = ""
@@ -288,10 +304,10 @@ def fetch_direct_xml_rss(rss_url, default_source_name, category="general", scope
                 tag_lower = child.tag.lower()
                 if "thumbnail" in tag_lower or "content" in tag_lower or "enclosure" in tag_lower:
                     u = child.attrib.get("url") or child.attrib.get("href") or ""
-                    if u.startswith("http"):
+                    if is_safe_url(u):
                         thumb_url = u.replace("/standard/240/", "/standard/624/")
                         break
-            if not thumb_url:
+            if not is_safe_url(thumb_url):
                 thumb_url = pick_category_image(title, category)
 
             results.append(
@@ -425,9 +441,16 @@ def fetch_category_bundle(category="general", country="in", q="", from_date="", 
 
 
 def get_cached_or_fetch(category="general", country="in", q="", from_date="", to_date="", force=False):
+    if category not in CATEGORIES:
+        category = "general"
+    country = country.lower() if country and country.lower() in ("in", "us", "gb", "au", "ca", "de", "fr", "jp") else "in"
+    q = (q or "")[:100].strip()
+    from_date = (from_date or "")[:25]
+    to_date = (to_date or "")[:25]
+
     cache_key = f"{country}:{category}:{q}:{from_date}:{to_date}"
     with CACHE_LOCK:
-        ACTIVE_KEYS.add((country, category, q))
+        ACTIVE_KEYS[(country, category, q)] = time.time()
         entry = RAM_CACHE.get(cache_key)
 
     if entry and not force:
@@ -438,6 +461,10 @@ def get_cached_or_fetch(category="general", country="in", q="", from_date="", to
     payload, articles = fetch_category_bundle(category, country, q, from_date, to_date)
     with CACHE_LOCK:
         RAM_CACHE[cache_key] = {"ts": time.time(), "payload": payload, "articles": articles}
+        if len(RAM_CACHE) > 200:
+            oldest_keys = sorted(RAM_CACHE.keys(), key=lambda k: RAM_CACHE[k]["ts"])[:50]
+            for old_k in oldest_keys:
+                RAM_CACHE.pop(old_k, None)
     return payload
 
 
@@ -446,6 +473,10 @@ def refresh_key(cache_key, category, country, q, from_date="", to_date=""):
         payload, articles = fetch_category_bundle(category, country, q, from_date, to_date)
         with CACHE_LOCK:
             RAM_CACHE[cache_key] = {"ts": time.time(), "payload": payload, "articles": articles}
+            if len(RAM_CACHE) > 200:
+                oldest_keys = sorted(RAM_CACHE.keys(), key=lambda k: RAM_CACHE[k]["ts"])[:50]
+                for old_k in oldest_keys:
+                    RAM_CACHE.pop(old_k, None)
     except Exception:
         pass
 
@@ -454,8 +485,13 @@ def realtime_scanner_loop():
     """Continuously scans Indian & Macro Global wires every 10 seconds."""
     while True:
         time.sleep(10)
+        now = time.time()
         with CACHE_LOCK:
-            keys_to_scan = list(ACTIVE_KEYS)[:8]
+            for k in list(ACTIVE_KEYS.keys()):
+                if now - ACTIVE_KEYS[k] > 600:
+                    del ACTIVE_KEYS[k]
+            recent_items = sorted(ACTIVE_KEYS.items(), key=lambda x: x[1], reverse=True)[:8]
+            keys_to_scan = [k for k, _ in recent_items]
         for country, category, q in keys_to_scan:
             cache_key = f"{country}:{category}:{q}::"
             EXECUTOR.submit(refresh_key, cache_key, category, country, q, "", "")
@@ -472,6 +508,16 @@ class FastNewsHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        norm_path = urllib.parse.unquote(parsed.path)
+
+        # Security check: Block direct download of sensitive files and hidden paths
+        clean_path = norm_path.replace("\\", "/").strip("/")
+        segments = clean_path.split("/") if clean_path else []
+        if any(s.startswith(".") for s in segments) or clean_path.lower().endswith(
+            (".py", ".env", ".bat", ".json", ".md")
+        ):
+            self.send_error(404, "File not found")
+            return
 
         if parsed.path == "/api/fast-news":
             qs = urllib.parse.parse_qs(parsed.query)
@@ -516,7 +562,11 @@ class FastNewsHandler(SimpleHTTPRequestHandler):
                 return
 
         if parsed.path in ("/", "/index.html"):
-            self.path = "/launch.html"
+            dist_index = os.path.join(BASE_DIR, "dist", "index.html")
+            if os.path.exists(dist_index):
+                self.path = "/dist/index.html"
+            else:
+                self.path = "/launch.html"
 
         return super().do_GET()
 

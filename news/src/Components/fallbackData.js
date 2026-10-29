@@ -593,3 +593,13 @@ export function cleanArticleContent(content, description) {
   }
   return cleaned;
 }
+
+export function safeUrl(u) {
+  if (!u || typeof u !== "string") return "#";
+  try {
+    const p = new URL(u.trim());
+    return (p.protocol === "https:" || p.protocol === "http:") ? p.href : "#";
+  } catch {
+    return "#";
+  }
+}
