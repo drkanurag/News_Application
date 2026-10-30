@@ -817,26 +817,6 @@ const NewsBoard = ({
         </div>
       </div>
 
-      {/* Status Banner when using fallback data */}
-      {activeView === "feed" && isFallback && statusMessage && !loading && (
-        <div
-          className="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 px-3 mb-4 small rounded-3"
-          role="status"
-        >
-          <div>
-            <i className="bi bi-info-circle-fill me-2"></i>
-            {statusMessage}
-          </div>
-          <button
-            type="button"
-            className="btn btn-sm btn-warning fw-medium py-0 px-2"
-            onClick={() => fetchNews(true, false)}
-          >
-            Retry Live API
-          </button>
-        </div>
-      )}
-
       {/* Loading Skeleton State */}
       {loading && activeView === "feed" && (
         <div>

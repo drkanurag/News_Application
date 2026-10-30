@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "NewsMag — Real-Time News & Macro Intelligence Platform",
   "scripts": {
+    "postinstall": "npm --prefix news install",
     "build": "npm --prefix news run build",
     "test": "npm --prefix news test",
     "dev": "npm --prefix news run dev"

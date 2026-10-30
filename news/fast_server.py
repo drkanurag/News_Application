@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
 PORT = 5173
 API_KEY = os.environ.get("NEWSAPI_KEY", "")
 
@@ -560,6 +561,11 @@ class FastNewsHandler(SimpleHTTPRequestHandler):
                     time.sleep(8)
             except (BrokenPipeError, ConnectionResetError, Exception):
                 return
+
+        if parsed.path.startswith("/assets/"):
+            dist_asset = os.path.join(BASE_DIR, "dist", parsed.path.lstrip("/"))
+            if os.path.exists(dist_asset):
+                self.path = "/dist" + parsed.path
 
         if parsed.path in ("/", "/index.html"):
             dist_index = os.path.join(BASE_DIR, "dist", "index.html")

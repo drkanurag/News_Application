@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm --prefix news install && npm --prefix news run build",
+  "installCommand": "npm --prefix news install",
+  "buildCommand": "npm --prefix news run build",
   "outputDirectory": "news/dist",
   "framework": "vite",
   "rewrites": [

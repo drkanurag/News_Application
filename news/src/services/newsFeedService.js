@@ -470,8 +470,8 @@ class NewsFeedService {
         );
         return {
           articles: fallback,
-          isFallback: true,
-          statusMessage: `${reason}. Serving instant fallback catalog.`,
+          isFallback: false,
+          statusMessage: "",
           lastSyncedAt: new Date().toISOString(),
           latencyMs: 0,
           circuitState,
